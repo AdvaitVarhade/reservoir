@@ -1,6 +1,6 @@
 """
 Fetch historical weather data from Open-Meteo Archive API
-for all 14 river zones (2020-2025, hourly)
+for all 14 river zones (hourly)
 
 This generates ~500k+ rows for proper model training
 """
@@ -11,7 +11,13 @@ from datetime import datetime
 import time
 import sys
 
-OUTPUT_FILE = "historical_weather.csv"
+from config import (
+    HISTORICAL_DATA,
+    HISTORY_START_DATE,
+    HISTORY_END_DATE,
+    HISTORICAL_API_TIMEOUT,
+    HISTORICAL_RATE_LIMIT,
+)
 
 RIVER_ZONES = {
     "Krishna": {
@@ -37,7 +43,7 @@ RIVER_ZONES = {
 }
 
 
-def fetch_historical_weather(lat, lon, start_date="2020-01-01", end_date="2025-12-31"):
+def fetch_historical_weather(lat, lon, start_date=HISTORY_START_DATE, end_date=HISTORY_END_DATE):
     """
     Fetch hourly historical weather data from Open-Meteo Archive API
     """
@@ -51,7 +57,7 @@ def fetch_historical_weather(lat, lon, start_date="2020-01-01", end_date="2025-1
 
     try:
         print(f"  Fetching {lat}, {lon}...", end="", flush=True)
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, timeout=HISTORICAL_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
 
@@ -104,7 +110,7 @@ def build_historical_dataset():
             all_records.extend(records)
 
             # Rate limiting: Open-Meteo allows reasonable requests
-            time.sleep(1)
+            time.sleep(HISTORICAL_RATE_LIMIT)
 
     # Convert to DataFrame
     df = pd.DataFrame(all_records)
@@ -133,26 +139,26 @@ def build_historical_dataset():
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("FETCHING HISTORICAL WEATHER DATA (2020-2025)")
+    print("FETCHING HISTORICAL WEATHER DATA")
     print("=" * 70)
-    print(f"Target: {OUTPUT_FILE}")
-    print(f"Zones: 14 (Krishna: 5, Narmada: 4, Kaveri: 5)")
-    print(f"Duration: 2020-01-01 to 2025-12-31 (hourly)")
+    print(f"Target : {HISTORICAL_DATA}")
+    print(f"Zones  : {sum(len(z) for z in RIVER_ZONES.values())} "
+          f"(Krishna: 5, Narmada: 4, Kaveri: 5)")
+    print(f"Period : {HISTORY_START_DATE} to {HISTORY_END_DATE} (hourly)")
     print("=" * 70)
 
     df = build_historical_dataset()
 
     print(f"\n{'='*70}")
     print(f"Dataset Summary:")
-    print(f"  Total rows: {len(df):,}")
-    print(f"  Unique rivers: {df['river'].nunique()}")
-    print(f"  Unique zones: {df['zone'].nunique()}")
-    print(f"  Date range: {df['timestamp'].min()} to {df['timestamp'].max()}")
-    print(f"  Columns: {', '.join(df.columns)}")
+    print(f"  Total rows    : {len(df):,}")
+    print(f"  Unique rivers : {df['river'].nunique()}")
+    print(f"  Unique zones  : {df['zone'].nunique()}")
+    print(f"  Date range    : {df['timestamp'].min()} to {df['timestamp'].max()}")
+    print(f"  Columns       : {', '.join(df.columns)}")
     print(f"{'='*70}\n")
 
     # Save to CSV
-    df.to_csv(OUTPUT_FILE, index=False)
-    print(f"✓ Saved {OUTPUT_FILE}")
-    print(f"  Size: {len(df):,} rows × {len(df.columns)} columns")
-    print(f"  File size: {pd.read_csv(OUTPUT_FILE).__sizeof__() / 1024 / 1024:.1f} MB")
+    df.to_csv(HISTORICAL_DATA, index=False)
+    print(f"✓ Saved {HISTORICAL_DATA}")
+    print(f"  Size: {len(df):,} rows x {len(df.columns)} columns")

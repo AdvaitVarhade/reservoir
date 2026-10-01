@@ -3,7 +3,7 @@
 Complete ML Pipeline for River Rainfall Forecasting
 
 Workflow:
-1. Fetch historical weather data (Open-Meteo, 2020-2025)
+1. Fetch historical weather data (Open-Meteo, 2020-present)
 2. Feature engineering (lag, rolling averages, trends)
 3. Train XGBoost model
 4. Save model for real-time predictions
@@ -21,10 +21,7 @@ from pathlib import Path
 import pandas as pd
 import os
 
-# Project files
-HISTORICAL_DATA = "historical_weather.csv"
-TRAINING_DATA = "training_dataset.csv"
-MODEL_FILE = "rainfall_model.pkl"
+from config import HISTORICAL_DATA, TRAINING_DATA, MODEL_FILE
 
 
 def run_command(script_name, description):
@@ -46,14 +43,15 @@ def run_command(script_name, description):
         return False
 
 
-def check_file_exists(filename, description):
+def check_file_exists(filepath, description):
     """Check if a required file exists"""
-    if Path(filename).exists():
-        file_size = Path(filename).stat().st_size / 1024 / 1024
-        print(f"✓ {description}: {filename} ({file_size:.1f} MB)")
+    p = Path(filepath)
+    if p.exists():
+        file_size = p.stat().st_size / 1024 / 1024
+        print(f"✓ {description}: {filepath} ({file_size:.1f} MB)")
         return True
     else:
-        print(f"✗ {description}: {filename} NOT FOUND")
+        print(f"✗ {description}: {filepath} NOT FOUND")
         return False
 
 
@@ -96,7 +94,6 @@ def main():
     print("="*70)
     print("\nProject: Multi-Zone Historical Weather Analysis")
     print("Rivers: Krishna (5 zones), Narmada (4 zones), Kaveri (5 zones)")
-    print("Period: 2020-2025 (hourly data)")
     print("Model: XGBoost Rainfall Predictor")
     print("="*70)
 
@@ -156,13 +153,13 @@ def main():
 
     print("\nGenerated Files:")
     if check_file_exists(HISTORICAL_DATA, "  Historical data"):
-        print("    → Use for retraining / data analysis")
+        print("    -> Use for retraining / data analysis")
 
     if check_file_exists(TRAINING_DATA, "  Training dataset"):
-        print("    → Engineered features ready for ML")
+        print("    -> Engineered features ready for ML")
 
     if check_file_exists(MODEL_FILE, "  Trained model"):
-        print("    → Ready for real-time predictions")
+        print("    -> Ready for real-time predictions")
         print("\n  Load with: joblib.load('rainfall_model.pkl')")
         print("  Use with: model.predict(features)")
 

@@ -1,5 +1,6 @@
 import pandas as pd
 import joblib
+from pathlib import Path
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     mean_absolute_error,
@@ -8,14 +9,20 @@ from sklearn.metrics import (
 )
 from xgboost import XGBRegressor
 
-
-INPUT_FILE = "training_dataset.csv"
-MODEL_FILE = "rainfall_model.pkl"
+from config import (
+    TRAINING_DATA,
+    MODEL_FILE,
+    N_ESTIMATORS,
+    LEARNING_RATE,
+    MAX_DEPTH,
+    RANDOM_STATE,
+    TEST_SIZE,
+)
 
 
 def load_data():
 
-    df = pd.read_csv(INPUT_FILE)
+    df = pd.read_csv(TRAINING_DATA)
 
     drop_columns = [
         "timestamp",
@@ -41,10 +48,10 @@ def load_data():
 def train_model(X_train, y_train):
 
     model = XGBRegressor(
-        n_estimators=200,
-        learning_rate=0.05,
-        max_depth=6,
-        random_state=42
+        n_estimators=N_ESTIMATORS,
+        learning_rate=LEARNING_RATE,
+        max_depth=MAX_DEPTH,
+        random_state=RANDOM_STATE,
     )
 
     model.fit(X_train, y_train)
@@ -60,26 +67,13 @@ def evaluate_model(
 
     predictions = model.predict(X_test)
 
-    mae = mean_absolute_error(
-        y_test,
-        predictions
-    )
-
-    mse = mean_squared_error(
-        y_test,
-        predictions
-    )
-
+    mae  = mean_absolute_error(y_test, predictions)
+    mse  = mean_squared_error(y_test, predictions)
     rmse = mse ** 0.5
-
-    r2 = r2_score(
-        y_test,
-        predictions
-    )
+    r2   = r2_score(y_test, predictions)
 
     print("\nModel Performance")
     print("-" * 40)
-
     print(f"MAE  : {mae:.3f}")
     print(f"MSE  : {mse:.3f}")
     print(f"RMSE : {rmse:.3f}")
@@ -88,14 +82,8 @@ def evaluate_model(
 
 def save_model(model):
 
-    joblib.dump(
-        model,
-        MODEL_FILE
-    )
-
-    print(
-        f"\nModel saved as {MODEL_FILE}"
-    )
+    joblib.dump(model, MODEL_FILE)
+    print(f"\nModel saved as {MODEL_FILE}")
 
 
 def main():
@@ -104,31 +92,20 @@ def main():
 
     X, y = load_data()
 
-    print(
-        f"Dataset size: {len(X)} rows"
-    )
+    print(f"Dataset size: {len(X)} rows")
 
-    X_train, X_test, y_train, y_test = (
-        train_test_split(
-            X,
-            y,
-            test_size=0.2,
-            random_state=42
-        )
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=TEST_SIZE,
+        random_state=RANDOM_STATE,
     )
 
     print("Training model...")
 
-    model = train_model(
-        X_train,
-        y_train
-    )
+    model = train_model(X_train, y_train)
 
-    evaluate_model(
-        model,
-        X_test,
-        y_test
-    )
+    evaluate_model(model, X_test, y_test)
 
     save_model(model)
 
