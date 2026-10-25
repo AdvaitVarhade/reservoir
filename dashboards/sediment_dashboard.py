@@ -83,6 +83,8 @@ tabs = st.tabs([
     "5. Epistemic Uncertainty",
     "6. Explainability & Causal Attention",
     "7. Counterfactual Scenarios (CSDN)",
+    "8. Multi-Reservoir Zone Analysis",
+    "9. Model Benchmark & Evaluation",
 ])
 
 # Tab 1: Overview
@@ -111,7 +113,7 @@ with tabs[1]:
 
     act_c1, act_c2 = st.columns([3, 1])
     with act_c2:
-        if st.button("🔄 Fetch Live Weather & Predict", use_container_width=True):
+        if st.button("Fetch Live Weather & Predict", use_container_width=True):
             with st.spinner("Fetching live Open-Meteo forecasts and predicting next-hour rainfall..."):
                 try:
                     if str(REPO_ROOT) not in sys.path:
@@ -437,3 +439,473 @@ with tabs[6]:
     if exists(cf_res_p):
         st.markdown("#### Multi-Scenario Systematic Benchmark")
         st.dataframe(pd.read_csv(cf_res_p), use_container_width=True)
+
+
+# Tab 8: Multi-Reservoir Zone Analysis
+with tabs[7]:
+    st.subheader("Multi-Reservoir Zone-Wise Sedimentation Analysis")
+    st.caption("Zone Partitioning • Spatial Hotspot Risk • WR-GNN Topological Connectivity • Epistemic Uncertainty • CSDN Scenarios for Krishna, Narmada & Kaveri Basins")
+
+    from sediment_hotspot.reservoirs.catalog import RESERVOIR_CATALOG, list_primary_reservoirs, get_reservoir_spec
+    from sediment_hotspot.reservoirs.pipeline import run_single_reservoir_pipeline, run_all_multi_reservoir_pipelines
+
+    MULTI_OUT = REPO_ROOT / "data/outputs/multi_reservoir"
+
+    RESERVOIR_OPTIONS = [
+        ("Nagarjuna Sagar Reservoir (Krishna Basin) [Prioritized]", "krishna_nagarjuna_sagar"),
+        ("Omkareshwar Reservoir (Narmada Basin) [Prioritized]", "narmada_omkareshwar"),
+        ("Mettur Dam - Stanley Reservoir (Kaveri Basin) [Prioritized]", "kaveri_mettur"),
+        ("Krishna Raja Sagara - KRS (Kaveri Basin)", "kaveri_krs"),
+        ("Almatti Reservoir (Krishna Basin)", "krishna_almatti"),
+    ]
+
+    top_c1, top_c2, top_c3 = st.columns([3, 1.2, 1.2])
+    with top_c1:
+        selected_res_label = st.selectbox(
+            "Select Reservoir for Zone-Wise Analysis",
+            [opt[0] for opt in RESERVOIR_OPTIONS],
+            index=0,
+        )
+        selected_res_id = next(opt[1] for opt in RESERVOIR_OPTIONS if opt[0] == selected_res_label)
+
+    with top_c2:
+        st.write("")
+        if st.button("Run Live Analysis", use_container_width=True, help="Re-runs zone pipeline and MC Dropout inference for selected reservoir"):
+            with st.spinner(f"Running zone-wise prediction pipeline for {selected_res_label}..."):
+                try:
+                    run_single_reservoir_pipeline(selected_res_id, model_path="data/models/sediment_fusion_model.pt", output_base_dir="data/outputs/multi_reservoir", mc_samples=15)
+                    st.success("Successfully generated zone-wise predictions!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error running pipeline: {e}")
+
+    with top_c3:
+        st.write("")
+        if st.button("Benchmark All 3 Basins", use_container_width=True, help="Executes multi-reservoir analysis across Krishna, Narmada, and Kaveri basins"):
+            with st.spinner("Executing multi-reservoir analysis across all basins..."):
+                try:
+                    run_all_multi_reservoir_pipelines(model_path="data/models/sediment_fusion_model.pt", output_base_dir="data/outputs/multi_reservoir", mc_samples=15)
+                    st.success("Completed cross-basin benchmark!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error executing benchmark: {e}")
+
+    res_spec = get_reservoir_spec(selected_res_id)
+    res_dir = MULTI_OUT / selected_res_id
+
+    # Check if artifacts exist; if not, automatically run or advise
+    if not res_dir.exists() or not (res_dir / "future_sediment_hotspot_heatmap.npy").exists():
+        st.info(f"Artifacts for **{res_spec.name}** have not been generated yet. Running one-time analysis...")
+        with st.spinner(f"Initializing {res_spec.name} spatial grid, zones, and predictions..."):
+            run_single_reservoir_pipeline(selected_res_id, model_path="data/models/sediment_fusion_model.pt", output_base_dir="data/outputs/multi_reservoir", mc_samples=15)
+        st.rerun()
+
+    # --- 1. Reservoir Metadata Header ---
+    meta_path = res_dir / "prediction_metadata.json"
+    meta_dict = {}
+    if meta_path.exists():
+        import json
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta_dict = json.load(f)
+
+    w_info = meta_dict.get("weather_data", {})
+    stats = meta_dict.get("summary_statistics", {})
+
+    st.markdown("---")
+    hdr_c1, hdr_c2, hdr_c3, hdr_c4, hdr_c5 = st.columns(5)
+    hdr_c1.metric("River Basin", res_spec.basin, help=f"River: {res_spec.river}")
+    hdr_c2.metric("Dam Coordinates", f"{res_spec.dam_coordinates[0]:.4f}°N, {res_spec.dam_coordinates[1]:.4f}°E", help="CWC / WRIS Station Coordinates")
+    hdr_c3.metric("Gross Storage", f"{res_spec.gross_storage_bcm:.3f} BCM", help=f"Full Reservoir Level: {res_spec.full_reservoir_level_m} m")
+    hdr_c4.metric("Monitored Zones", f"{len(res_spec.zones)} Spatial Zones", help="Hydrologically partitioned reach zones")
+    hdr_c5.metric("Live Rainfall", f"{w_info.get('current_rainfall', 0.0):.1f} mm", delta=f"1h Fcst: {w_info.get('predicted_rainfall_next_hour', 0.0):.2f} mm")
+
+    st.markdown("---")
+
+    # Sub-tabs for clean organization
+    m_subtabs = st.tabs([
+        "Zone Boundaries & Hotspots",
+        "Zone-Wise Risk & DSDI",
+        "Uncertainty & Connectivity",
+        "Counterfactual Scenarios (CSDN)",
+        "Cross-Basin Reservoir Comparison",
+        "Data Provenance & Validation",
+    ])
+
+    # Sub-tab 1: Zone Boundaries & Hotspots
+    with m_subtabs[0]:
+        st.subheader("1. Reservoir Location, Zone Boundaries & Predicted Sediment Hotspots")
+        c_map1, c_map2 = st.columns(2)
+
+        zone_png = res_dir / "reservoir_zone_map.png"
+        hotspot_npy = res_dir / "future_sediment_hotspot_heatmap.npy"
+        hotspot_png = res_dir / "hotspot_heatmap.png"
+
+        with c_map1:
+            st.markdown("#### Hydrological Zone Partitioning Map")
+            if zone_png.exists():
+                st.image(str(zone_png), use_container_width=True)
+            else:
+                st.info("Zone map image generating...")
+
+        with c_map2:
+            st.markdown("#### Predicted Sediment Hotspots Heatmap f(X)")
+            if hotspot_npy.exists():
+                h_data = np.load(hotspot_npy)
+                fig_h = plot_heatmap(
+                    h_data,
+                    f"{res_spec.name}: Sediment Accumulation Hotspots",
+                    cmap="viridis",
+                    vmin=0.0,
+                    vmax=1.0,
+                    cbar_label="Risk Probability [0 - 1]",
+                    contours=[0.5, 0.7],
+                    contour_colors=["#ffffff", "#ffd700"],
+                )
+                st.pyplot(fig_h)
+                plt.close(fig_h)
+            elif hotspot_png.exists():
+                st.image(str(hotspot_png), use_container_width=True)
+
+        zone_meta_csv = res_dir / "reservoir_zone_map.csv"
+        if zone_meta_csv.exists():
+            st.markdown("#### Zone Geographic Specifications & Morphology Table")
+            z_mdf = pd.read_csv(zone_meta_csv)
+            st.dataframe(
+                z_mdf[["zone_id", "zone_name", "zone_type", "depth_category", "water_area_sqkm", "centroid_lat", "centroid_lon", "description"]],
+                use_container_width=True,
+            )
+
+    # Sub-tab 2: Zone Risk & DSDI
+    with m_subtabs[1]:
+        st.subheader("2. Zone-Wise Sediment Risk & Dynamic Sediment Deposition Index (DSDI)")
+        dsdi_npy = res_dir / "dsdi_heatmap.npy"
+        risk_csv = res_dir / "zone_sediment_risk.csv"
+        dsdi_csv = res_dir / "zone_dsdi_scores.csv"
+
+        z_c1, z_c2 = st.columns(2)
+        with z_c1:
+            if dsdi_npy.exists():
+                dsdi_arr = np.load(dsdi_npy)
+                fig_dsdi = plot_heatmap(
+                    dsdi_arr,
+                    f"{res_spec.name}: Dynamic Sediment Deposition Index (DSDI)",
+                    cmap="viridis",
+                    vmin=0.0,
+                    vmax=1.0,
+                    cbar_label="DSDI Gated Prior [0 - 1]",
+                    contours=[0.5],
+                    contour_colors=["#ffffff"],
+                )
+                st.pyplot(fig_dsdi)
+                plt.close(fig_dsdi)
+
+        with z_c2:
+            if risk_csv.exists():
+                r_df = pd.read_csv(risk_csv)
+                st.markdown("#### Mean Predicted Risk by Reservoir Zone")
+                chart_df = r_df.set_index("zone_id")[["mean_risk", "peak_risk"]]
+                chart_df.columns = ["Mean Risk [0-1]", "Peak Risk [0-1]"]
+                st.bar_chart(chart_df, height=340)
+
+        if risk_csv.exists() and dsdi_csv.exists():
+            r_df = pd.read_csv(risk_csv)
+            d_df = pd.read_csv(dsdi_csv)
+            merged_zone = pd.merge(r_df, d_df[["zone_id", "dsdi_score", "erosion_forcing_category"]], on="zone_id")
+            st.markdown("#### Detailed Zone Risk & Forcing Statistics")
+            st.dataframe(
+                merged_zone[[
+                    "zone_id", "zone_name", "zone_type", "mean_risk", "peak_risk",
+                    "high_risk_cells_pct", "risk_category", "dsdi_score", "erosion_forcing_category"
+                ]],
+                use_container_width=True,
+            )
+
+    # Sub-tab 3: Uncertainty & Connectivity
+    with m_subtabs[2]:
+        st.subheader("3. Epistemic Uncertainty & WR-GNN Upstream-to-Downstream Connectivity")
+        unc_npy = res_dir / "uncertainty_heatmap.npy"
+        unc_csv = res_dir / "zone_uncertainty.csv"
+        conn_png = res_dir / "zone_connectivity_graph.png"
+        conn_json = res_dir / "zone_connectivity_graph.json"
+
+        u_c1, u_c2 = st.columns(2)
+        with u_c1:
+            st.markdown("#### MC Dropout Epistemic Variance (σ²)")
+            if unc_npy.exists():
+                u_arr = np.load(unc_npy)
+                fig_u = plot_heatmap(
+                    u_arr,
+                    "Predictive Variance σ² (Epistemic Uncertainty)",
+                    cmap="magma",
+                    cbar_label="MC Dropout Variance σ²",
+                )
+                st.pyplot(fig_u)
+                plt.close(fig_u)
+
+        with u_c2:
+            st.markdown("#### Watershed-to-Reservoir Connectivity Graph (WR-GNN)")
+            if conn_png.exists():
+                st.image(str(conn_png), use_container_width=True)
+            else:
+                st.info("Connectivity graph rendering...")
+
+        if unc_csv.exists():
+            st.markdown("#### Zone Decision Triage & Priority Monitoring Status")
+            st.dataframe(pd.read_csv(unc_csv), use_container_width=True)
+
+        if conn_json.exists():
+            with open(conn_json, "r", encoding="utf-8") as f:
+                c_data = json.load(f)
+            st.markdown("#### Topological Advection & Sediment Attenuation Records")
+            st.dataframe(pd.DataFrame(c_data.get("propagation_records", [])), use_container_width=True)
+            st.info(f"**Topological Analysis Insight**: {c_data.get('scientific_interpretation', '')}")
+
+    # Sub-tab 4: Counterfactual Scenarios (CSDN)
+    with m_subtabs[3]:
+        st.subheader("4. CSDN Counterfactual Environmental Intervention Scenarios")
+        st.markdown("Evaluate spatial risk shifts under controlled rainfall, river flow, and inflow changes:")
+
+        CF_OPTS = [
+            ("Baseline Reference", "baseline", 0.0),
+            ("Rainfall +10%", "rainfall_plus10", 0.10),
+            ("Rainfall +20%", "rainfall_plus20", 0.20),
+            ("Rainfall +30%", "rainfall_plus30", 0.30),
+            ("River Flow +10%", "flow_plus10", 0.10),
+            ("River Flow -10%", "flow_minus10", -0.10),
+            ("River Flow -20%", "flow_minus20", -0.20),
+            ("Reservoir Inflow +20%", "inflow_plus20", 0.20),
+            ("Reservoir Inflow -20%", "inflow_minus20", -0.20),
+        ]
+
+        sc_label = st.selectbox("Select Counterfactual Intervention", [o[0] for o in CF_OPTS], index=2)
+        sel_sc = next(o for o in CF_OPTS if o[0] == sc_label)
+        sc_file_key, sc_mag = sel_sc[1], sel_sc[2]
+
+        b_map_p = res_dir / "counterfactual_baseline.npy"
+        cf_map_p = res_dir / f"counterfactual_{sc_file_key}.npy"
+        diff_map_p = res_dir / f"counterfactual_difference_maps/diff_{sc_file_key}.npy"
+        sens_map_p = res_dir / f"sensitivity_maps/sens_{sc_file_key}.npy"
+
+        if all(p.exists() for p in [b_map_p, cf_map_p, diff_map_p, sens_map_p]):
+            b_m = np.load(b_map_p)
+            cf_m = np.load(cf_map_p)
+            d_m = np.load(diff_map_p)
+            s_m = np.load(sens_map_p)
+
+            p1, p2, p3, p4 = st.columns(4)
+            with p1:
+                f1 = plot_heatmap(b_m, "1. Baseline Risk H", cmap="viridis", vmin=0.0, vmax=1.0, cbar_label="Risk [0-1]")
+                st.pyplot(f1)
+                plt.close(f1)
+            with p2:
+                f2 = plot_heatmap(cf_m, f"2. Counterfactual H_cf ({sc_label})", cmap="viridis", vmin=0.0, vmax=1.0, cbar_label="Risk [0-1]")
+                st.pyplot(f2)
+                plt.close(f2)
+            with p3:
+                lim_d = max(0.02, float(max(abs(d_m.min()), abs(d_m.max()))))
+                f3 = plot_heatmap(d_m, "3. Risk Shift ΔH = H_cf − H", cmap="RdBu_r", vmin=-lim_d, vmax=lim_d, cbar_label="Δ Risk (+Red / -Blue)")
+                st.pyplot(f3)
+                plt.close(f3)
+            with p4:
+                lim_s = max(0.05, float(s_m.max()))
+                f4 = plot_heatmap(s_m, "4. Spatial Sensitivity |ΔH| / |Δx|", cmap="magma", vmin=0.0, vmax=lim_s, cbar_label="Sensitivity")
+                st.pyplot(f4)
+                plt.close(f4)
+
+            # Metrics
+            m_c1, m_c2, m_c3, m_c4 = st.columns(4)
+            m_c1.metric("Mean Shift ΔH", f"{d_m.mean():+.4f}")
+            m_c2.metric("Max Shift ΔH", f"{d_m.max():+.4f}")
+            m_c3.metric("High-Risk Area (≥0.5)", f"{(cf_m >= 0.5).mean() * 100:.1f}%", delta=f"{((cf_m >= 0.5).mean() - (b_m >= 0.5).mean()) * 100:+.1f}%")
+            m_c4.metric("Mean Sensitivity", f"{s_m.mean():.4f}")
+
+        # Zone vulnerability table
+        z_sens_p = res_dir / "zone_sensitivity.csv"
+        if z_sens_p.exists():
+            st.markdown("#### Zone Vulnerability & Sensitivity Ranking (+20% Rainfall Benchmark)")
+            st.dataframe(pd.read_csv(z_sens_p), use_container_width=True)
+
+        cf_all_p = res_dir / "counterfactual_results.csv"
+        if cf_all_p.exists():
+            st.markdown("#### Multi-Scenario Systematic Benchmark Table")
+            st.dataframe(pd.read_csv(cf_all_p), use_container_width=True)
+
+    # Sub-tab 5: Cross-Basin Reservoir Comparison
+    with m_subtabs[4]:
+        st.subheader("5. Cross-Basin Multi-Reservoir Comparative Benchmark")
+        st.caption("Comparison across Krishna (Nagarjuna Sagar), Narmada (Omkareshwar), and Kaveri (Mettur Dam)")
+
+        comp_csv = MULTI_OUT / "reservoir_comparison.csv"
+        if comp_csv.exists():
+            cmp_df = pd.read_csv(comp_csv)
+            st.dataframe(cmp_df, use_container_width=True)
+
+            ch_c1, ch_c2 = st.columns(2)
+            with ch_c1:
+                st.markdown("#### Mean vs Peak Hotspot Risk Comparison")
+                st.bar_chart(cmp_df.set_index("Reservoir Name")[["Mean Hotspot Risk", "Peak Hotspot Risk"]])
+
+            with ch_c2:
+                st.markdown("#### Mean Dynamic Sediment Deposition Index (DSDI)")
+                st.bar_chart(cmp_df.set_index("Reservoir Name")["Mean DSDI Score"])
+        else:
+            st.info("Run the cross-basin benchmark to view comparison table.")
+
+    # Sub-tab 6: Provenance & Validation
+    with m_subtabs[5]:
+        st.subheader("6. Evaluation, Data Provenance & Scientific Disclaimers")
+        eval_p = res_dir / "evaluation_metrics.json"
+        if eval_p.exists():
+            with open(eval_p, "r", encoding="utf-8") as f:
+                ev_data = json.load(f)
+
+            st.markdown("#### Quantitative Model Evaluation against Remote-Sensing Derived Reference Labels")
+            ev_c1, ev_c2, ev_c3, ev_c4, ev_c5 = st.columns(5)
+            ev_c1.metric("Detection IoU", f"{ev_data.get('iou', 0.0):.4f}")
+            ev_c2.metric("Dice Score", f"{ev_data.get('dice', 0.0):.4f}")
+            ev_c3.metric("Precision", f"{ev_data.get('precision', 0.0):.4f}")
+            ev_c4.metric("Recall / Sensitivity", f"{ev_data.get('recall', 0.0):.4f}")
+            ev_c5.metric("ROC-AUC", f"{ev_data.get('auc', 0.5):.4f}")
+
+            st.json(ev_data)
+
+        st.markdown("""
+        ### Label Provenance & Methodological Limitations
+        - **Label Provenance**: All sediment hotspot masks are derived from optical and multispectral remote-sensing proxies (Sentinel-2 NDTI, turbid plume thresholds, and SRTM DEM erosion susceptibility). They are explicitly designated as `DERIVED_FROM_SATELLITE_INDEX`.
+        - **Absence of Bathymetric Surveys**: Because periodic hydrographic/bathymetric echo-sounding surveys are not publicly published in real time for these reservoirs, **predicted values represent relative sediment accumulation risk probabilities $[0, 1]$**. They must **NOT** be interpreted as verified physical sediment volumes (million cubic meters) or bed elevation deposition thickness (meters).
+        - **Spatial Grid Alignment**: Each reservoir grid is georeferenced to WGS84 (`EPSG:4326`) with an approximate cell resolution tailored to the reservoir's surface geometry.
+        """)
+
+
+# Tab 9: Model Benchmark & Evaluation
+with tabs[8]:
+    st.subheader("9. Comparative Model Benchmarks & Empirical Evaluation")
+    st.caption("Rigorous performance evaluation across classical baselines, deep learning architectures, and ablation configurations")
+
+    eval_subtabs = st.tabs([
+        "Baseline Model Comparison",
+        "Ablation Analysis",
+        "Evaluation Figures & Publication Artifacts",
+        "Statistical Metrics Summary",
+    ])
+
+    results_dir = REPO_ROOT / "results"
+    paper_dir = results_dir / "paper"
+
+    with eval_subtabs[0]:
+        st.markdown("### Algorithm Performance Benchmark")
+        st.markdown("Empirical comparison of the proposed multimodal architecture against classical and single-modality baseline algorithms evaluated on the identical test split.")
+
+        baseline_csv = results_dir / "baseline_results.csv"
+        if not baseline_csv.exists() and (paper_dir / "table2_baseline_comparison.csv").exists():
+            baseline_csv = paper_dir / "table2_baseline_comparison.csv"
+
+        if baseline_csv.exists():
+            b_df = pd.read_csv(baseline_csv)
+            prop_row = b_df[b_df["model"].str.contains("Proposed|Full Model", case=False, na=False)]
+            if not prop_row.empty:
+                best_m = prop_row.iloc[0]
+                m_c1, m_c2, m_c3, m_c4, m_c5, m_c6 = st.columns(6)
+                m_c1.metric("Peak Test IoU", f"{best_m.get('iou', 0.0)*100:.2f}%")
+                m_c2.metric("Dice / F1 Score", f"{best_m.get('dice', 0.0)*100:.2f}%")
+                m_c3.metric("Precision", f"{best_m.get('precision', 0.0)*100:.2f}%")
+                m_c4.metric("Recall / Sensitivity", f"{best_m.get('recall', 0.0)*100:.2f}%")
+                m_c5.metric("ROC-AUC", f"{best_m.get('auc', 0.0):.4f}")
+                m_c6.metric("PR-AUC", f"{best_m.get('pr_auc', 0.0):.4f}")
+
+            st.markdown("#### Comparative Benchmark Table")
+            display_cols = [c for c in ["model", "iou", "dice", "precision", "recall", "auc", "pr_auc", "false_hotspot_rate", "zone_mae", "centroid_displacement"] if c in b_df.columns]
+            styled_df = b_df[display_cols].copy()
+            if "iou" in styled_df:
+                styled_df["iou"] = styled_df["iou"].map(lambda x: f"{x*100:.2f}%")
+            if "dice" in styled_df:
+                styled_df["dice"] = styled_df["dice"].map(lambda x: f"{x*100:.2f}%")
+            if "precision" in styled_df:
+                styled_df["precision"] = styled_df["precision"].map(lambda x: f"{x*100:.2f}%")
+            if "recall" in styled_df:
+                styled_df["recall"] = styled_df["recall"].map(lambda x: f"{x*100:.2f}%")
+            if "false_hotspot_rate" in styled_df:
+                styled_df["false_hotspot_rate"] = styled_df["false_hotspot_rate"].map(lambda x: f"{x:.5f}")
+            if "zone_mae" in styled_df:
+                styled_df["zone_mae"] = styled_df["zone_mae"].map(lambda x: f"{x:.4f}")
+            if "centroid_displacement" in styled_df:
+                styled_df["centroid_displacement"] = styled_df["centroid_displacement"].map(lambda x: f"{x:.2f} px" if pd.notna(x) else "N/A")
+
+            st.dataframe(styled_df, use_container_width=True)
+
+            st.markdown("#### Comparative Visualizations")
+            ch1, ch2 = st.columns(2)
+            with ch1:
+                st.markdown("**Intersection over Union (IoU) Comparison (%)**")
+                chart_iou = b_df.set_index("model")["iou"] * 100
+                st.bar_chart(chart_iou)
+            with ch2:
+                st.markdown("**Area Under Precision-Recall Curve (PR-AUC)**")
+                if "pr_auc" in b_df.columns:
+                    chart_pr = b_df.set_index("model")["pr_auc"]
+                    st.bar_chart(chart_pr)
+        else:
+            st.warning("Baseline results not found at results/baseline_results.csv")
+
+    with eval_subtabs[1]:
+        st.markdown("### Ablation Study Analysis")
+        st.markdown("Quantitative evaluation examining the impact of individual architectural components, loss terms, and physics constraints.")
+
+        ablation_csv = results_dir / "ablation_results.csv"
+        if not ablation_csv.exists() and (paper_dir / "table3_ablation_study.csv").exists():
+            ablation_csv = paper_dir / "table3_ablation_study.csv"
+
+        if ablation_csv.exists():
+            ab_df = pd.read_csv(ablation_csv)
+            st.dataframe(ab_df, use_container_width=True)
+
+            ab_c1, ab_c2 = st.columns(2)
+            with ab_c1:
+                st.markdown("**IoU (%) by Ablated Component**")
+                if "ablation_stage" in ab_df.columns and "iou" in ab_df.columns:
+                    st.bar_chart(ab_df.set_index("ablation_stage")["iou"] * 100)
+            with ab_c2:
+                st.markdown("**Centroid Displacement Error (Pixels)**")
+                if "ablation_stage" in ab_df.columns and "centroid_displacement" in ab_df.columns:
+                    st.bar_chart(ab_df.set_index("ablation_stage")["centroid_displacement"])
+        else:
+            st.warning("Ablation results not found at results/ablation_results.csv")
+
+    with eval_subtabs[2]:
+        st.markdown("### Research Figures & Visual Diagnostic Panels")
+        st.caption("High-resolution diagnostic visualizations generated during empirical benchmarking")
+
+        fig_cols = st.columns(2)
+        figs = [
+            ("fig3_predicted_hotspots.png", "Spatial Sediment Hotspot Prediction Map"),
+            ("fig2_dsdi_heatmap.png", "Dynamic Sediment Delivery Index (DSDI) Heatmap"),
+            ("fig7_uncertainty_map.png", "Epistemic Uncertainty via Monte Carlo Dropout"),
+            ("fig5_counterfactual_diff_rainfall20.png", "Counterfactual Response Map (+20% Rainfall Shift)"),
+            ("fig6_spatial_sensitivity.png", "Spatial Parameter Sensitivity Distribution"),
+        ]
+
+        for i, (fname, label) in enumerate(figs):
+            fpath = paper_dir / fname
+            col = fig_cols[i % 2]
+            with col:
+                if fpath.exists():
+                    st.markdown(f"**{label}** (`{fname}`)")
+                    st.image(str(fpath), use_container_width=True)
+                else:
+                    alt_path = OUT / fname
+                    if alt_path.exists():
+                        st.markdown(f"**{label}**")
+                        st.image(str(alt_path), use_container_width=True)
+
+    with eval_subtabs[3]:
+        st.markdown("### Complete Experimental Artifacts & LaTeX Tables")
+        st.markdown("Pre-compiled LaTeX tables formatted for academic publication:")
+
+        tex_files = list(paper_dir.glob("*.tex")) if paper_dir.exists() else []
+        if tex_files:
+            for tfile in sorted(tex_files):
+                with st.expander(f"LaTeX Source: {tfile.name}"):
+                    with open(tfile, "r", encoding="utf-8") as f:
+                        st.code(f.read(), language="latex")
+        else:
+            st.info("No LaTeX files found in results/paper/")
