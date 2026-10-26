@@ -13,3 +13,5 @@ scipy
 streamlit
 shap
 pyyaml
+pystac-client
+planetary-computer

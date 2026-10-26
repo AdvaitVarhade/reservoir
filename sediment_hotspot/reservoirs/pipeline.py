@@ -101,6 +101,10 @@ def run_single_reservoir_pipeline(
     output_base_dir: str = "data/outputs/multi_reservoir",
     mc_samples: int = 20,
     seed: int = 42,
+    use_real_terrain: bool = True,
+    satellite_tif_path: Optional[str | Path] = None,
+    flow_csv_path: Optional[str | Path] = None,
+    landcover_tif_path: Optional[str | Path] = None,
 ) -> Dict[str, Any]:
     """Runs comprehensive zone-wise prediction and counterfactual analysis for one reservoir."""
     spec = get_reservoir_spec(reservoir_id)
@@ -111,7 +115,14 @@ def run_single_reservoir_pipeline(
     zone_meta_df = export_zone_metadata_df(grid)
 
     # 2. Build multi-modal environmental batch
-    batch, env_prov = build_reservoir_environmental_batch(grid, seed=seed)
+    batch, env_prov = build_reservoir_environmental_batch(
+        grid,
+        seed=seed,
+        use_real_terrain=use_real_terrain,
+        satellite_tif_path=satellite_tif_path,
+        flow_csv_path=flow_csv_path,
+        landcover_tif_path=landcover_tif_path,
+    )
 
     # 3. Load pre-trained model
     ckpt = torch.load(require_file(model_path, "sediment fusion checkpoint"), map_location="cpu")
@@ -319,6 +330,7 @@ def run_all_multi_reservoir_pipelines(
     model_path: str = "data/models/sediment_fusion_model.pt",
     output_base_dir: str = "data/outputs/multi_reservoir",
     mc_samples: int = 15,
+    use_real_terrain: bool = True,
 ) -> pd.DataFrame:
     """Runs pipeline for all primary reservoirs in Krishna, Narmada, and Kaveri basins."""
     base_out = ensure_dir(output_base_dir)
@@ -333,6 +345,7 @@ def run_all_multi_reservoir_pipelines(
             model_path=model_path,
             output_base_dir=output_base_dir,
             mc_samples=mc_samples,
+            use_real_terrain=use_real_terrain,
         )
         results[spec.id] = res
         meta = res["metadata"]

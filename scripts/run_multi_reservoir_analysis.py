@@ -50,11 +50,34 @@ def main():
         default=20,
         help="Monte Carlo Dropout samples for epistemic uncertainty.",
     )
+    parser.add_argument(
+        "--satellite-image",
+        default=None,
+        help="Path to real multispectral Sentinel-2/Landsat GeoTIFF (optional).",
+    )
+    parser.add_argument(
+        "--flow-csv",
+        default=None,
+        help="Path to real CWC/India-WRIS river gauge CSV (optional).",
+    )
+    parser.add_argument(
+        "--landcover",
+        default=None,
+        help="Path to real ESA WorldCover land cover GeoTIFF (optional).",
+    )
+    parser.add_argument(
+        "--no-real-terrain",
+        action="store_true",
+        help="Disable real Open-Meteo/Copernicus DEM terrain fetching and use synthetic valley fallback.",
+    )
     args = parser.parse_args()
+
+    use_real_terrain = not args.no_real_terrain
 
     print("=======================================================================")
     print("Multi-Reservoir Zone-Wise Sedimentation Prediction & CSDN System")
     print(f"Basins: Krishna, Narmada, Kaveri | Target: {args.reservoir}")
+    print(f"Data Sources: Real DEM={use_real_terrain} | Satellite GeoTIFF={bool(args.satellite_image)} | Flow CSV={bool(args.flow_csv)}")
     print("=======================================================================")
 
     if args.reservoir == "all":
@@ -62,6 +85,7 @@ def main():
             model_path=args.model,
             output_base_dir=args.output_dir,
             mc_samples=args.mc_samples,
+            use_real_terrain=use_real_terrain,
         )
         print("\nCross-Reservoir Basin Comparison Table:")
         print(comp_df[["Reservoir Name", "River Basin", "Mean Hotspot Risk", "Peak Hotspot Risk", "Top Vulnerable Zone (+20% Rain)"]].to_string(index=False))
@@ -71,6 +95,10 @@ def main():
             model_path=args.model,
             output_base_dir=args.output_dir,
             mc_samples=args.mc_samples,
+            use_real_terrain=use_real_terrain,
+            satellite_tif_path=args.satellite_image,
+            flow_csv_path=args.flow_csv,
+            landcover_tif_path=args.landcover,
         )
         spec = res["spec"]
         print(f"\nCompleted pipeline for {spec.name} ({spec.basin} Basin)")

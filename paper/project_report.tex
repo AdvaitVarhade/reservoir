@@ -1,0 +1,253 @@
+\documentclass[twocolumn]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{float}
+\usepackage{caption}
+
+\geometry{a4paper, margin=0.8in}
+
+\title{Reservoir Rainfall and Sediment Hotspot Prediction:\\A Multi-Modal AI System with Attention Fusion}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+Water resource management is critical for agricultural productivity, power generation, and human consumption in India, where the monsoon-driven hydrological cycle dominates. Two interconnected challenges threaten sustainable water management: extreme rainfall variability causing floods and droughts, and reservoir sedimentation that reduces usable storage capacity year over year.
+
+Globally, reservoirs lose 0.5--1\% of total storage capacity annually to sedimentation (UNESCO estimates). For India, this is especially acute --- many reservoirs have lost 20--30\% of capacity, rendering billions of rupees of infrastructure investment less effective. Despite this, most existing solutions treat rainfall forecasting and sediment estimation as separate problems, missing the causal relationship between precipitation, runoff, erosion, and deposition.
+
+\textbf{Problem Statement:} There is no integrated, publicly-sourced ML system that can (a) forecast short-term rainfall at river-zone granularity and (b) use those forecasts alongside satellite, terrain, land-use, and flow data to predict where sediment will accumulate inside reservoirs.
+
+\textbf{Objectives:}
+\begin{enumerate}
+    \item Build a continuous data pipeline collecting historical and real-time weather data from Open-Meteo for 14 river zones across three Indian river systems (Krishna, Narmada, Kaveri).
+    \item Develop an XGBoost-based regression model for next-hour rainfall prediction.
+    \item Create a multi-modal deep learning fusion model (CNN + LSTM + Attention) for sediment hotspot prediction.
+    \item Provide a Streamlit dashboard for real-time visualization of predictions.
+    \item Offer explainability through attention-based feature importance.
+\end{enumerate}
+
+\textbf{Scope:}
+Geographically, the system covers 14 zones across the Krishna (5), Narmada (4), and Kaveri (5) river systems in India. Data spans hourly observations from 2020--2025 for training with near-real-time inference. All data sources are publicly available. The sediment model targets reservoir-scale hotspot detection for 8 predefined zones per reservoir.
+
+\section{Related Work}
+
+\subsection{Rainfall Forecasting}
+
+Traditional statistical models (ARIMA, SARIMA) have been used for Indian monsoon forecasting at monthly/seasonal scales, but their performance degrades at hourly resolution due to non-stationarity in short-term rainfall patterns~\cite{poonia2022}. Deep learning approaches (CNNs, LSTMs) capture spatiotemporal dependencies but require large training datasets and GPU resources. XGBoost has emerged as a strong alternative for site-specific short-term prediction, handling missing data well during live inference and achieving competitive accuracy with far less training time~\cite{kashiwao2017, lana2018}. However, existing XGBoost implementations for this domain are not integrated with downstream sediment modeling.
+
+\subsection{Sediment Transport and Deposition}
+
+Historically, sediment modeling has been physics-based using USLE/RUSLE for erosion estimation and SWAT or HSPF for watershed-scale transport simulation. These models require extensive parameterization and do not produce spatial hotspot maps within a reservoir. Recent data-driven approaches include CNNs from satellite imagery~\cite{chen2019}, Random Forest for sediment yield~\cite{ghebleh2021}, and LSTMs for suspended sediment concentration~\cite{fang2020}. Each uses a single data modality, limiting predictive power.
+
+\subsection{Multi-Modal Fusion for Environmental Sensing}
+
+Fusing heterogeneous data sources improves prediction robustness. CNN encoders process satellite and raster imagery, LSTM encoders handle temporal flow data, and attention mechanisms weight modalities by relevance~\cite{xu2015, vaswani2017}. While these components are individually well-established, their combination for sediment hotspot prediction in reservoirs is unexplored.
+
+\subsection{Research Gaps and Proposed Contributions}
+
+The following gaps were identified and addressed by this project:
+
+\begin{enumerate}
+    \item \textbf{Lack of integration between rainfall forecasting and sediment prediction.} Existing work addresses these separately. This project provides a linked two-stage architecture where the rainfall pipeline feeds directly into the sediment model via a rainfall feature adapter.
+
+    \item \textbf{Absence of pixel-level sediment hotspot prediction.} Prior models predict aggregate sediment yield. This project produces a 128$\times$128 pixel-level heatmap alongside zone-level risk scores, enabling spatially explicit reservoir management.
+
+    \item \textbf{No multi-modal attention fusion for sediment modeling.} While attention mechanisms are used in other domains~\cite{xu2015}, their application to sediment prediction with 5 heterogeneous modalities (satellite, terrain, landuse, flow, rain) is novel.
+
+    \item \textbf{Limited open-source pipelines for Indian reservoirs.} High-quality public data (Sentinel-2, SRTM, ESA WorldCover, Open-Meteo) is available but has not been integrated into a single reproducible, deployable ML pipeline for this application context.
+
+    \item \textbf{Missing explainability in sediment ML.} Prior work does not provide modality-level interpretability for sediment predictions. This project surfaces attention weights across all input modalities.
+\end{enumerate}
+
+The proposed contributions are:
+
+\begin{itemize}
+    \item \textbf{Two-stage integrated architecture:} XGBoost rainfall forecaster with an attention-based multi-modal sediment prediction network.
+    \item \textbf{SedimentHotspotFusionNet:} A novel architecture combining 3 CNN encoders, 1 LSTM encoder, 1 MLP encoder, and an attention fusion module with dual heatmap and zone-risk heads.
+    \item \textbf{All-public data pipeline:} Every data source is freely available, ensuring reproducibility.
+    \item \textbf{Built-in explainability:} Attention weights reveal per-modality importance.
+    \item \textbf{Operational deployment:} CLI pipeline and Streamlit dashboard for immediate use.
+\end{itemize}
+
+\section{Methodology}
+
+\subsection{Overall Architecture}
+
+The system operates in two stages. Stage 1 (rainfall forecasting) uses the Open-Meteo API to collect historical weather data for 14 river zones, engineers lag/rolling/trend features, and trains an XGBoost regressor for next-hour rainfall prediction. The trained model is then used for live predictions from the Open-Meteo Forecast API.
+
+Stage 2 (sediment hotspot prediction) ingests five data modalities: satellite imagery (Sentinel-2 or Landsat, processed to a 6-channel stack), terrain data (SRTM/ASTER DEM, processed to 4 features), land-use data (ESA WorldCover, mapped to erosion probabilities), river flow sequences (discharge, inflow, velocity), and rainfall features (aggregated from Stage 1 predictions). These are processed through individual encoders, fused via an attention mechanism, and passed to dual output heads producing a pixel-level heatmap and zone-level risk scores.
+
+\subsection{Architecture Diagram}
+
+\vspace{0.5em}
+\noindent\begin{minipage}{\linewidth}
+\centering
+\begin{tabular}{|p{0.95\linewidth}|}
+\hline
+\small
+\textbf{SedimentHotspotFusionNet Architecture}\\[4pt]
+\small
+\begin{verbatim}
+Inputs:
+  Satellite (6ch, 128x128)  -->  CNN Encoder (Conv3-BN-ReLU-Pool x3 + AvgPool)
+  Terrain   (4ch, 128x128)  -->  CNN Encoder (same architecture)
+  Landuse   (5ch, 128x128)  -->  CNN Encoder (same architecture)
+  Flow      (batch x 72 x 8)--> BiLSTM (2 layers, h=128, dropout=0.1)
+  Rain      (batch x 4)     -->  MLP (Linear(4,128)-ReLU)
+      
+Each encoder produces a 128-dimensional vector.
+
+AttentionFusion:
+  Stack 5 x 128-d vectors
+  Score each: Linear(128,64)-Tanh-Linear(64,1)
+  Softmax over modalities
+  Weighted sum --> fused 128-d vector
+
+Output Heads:
+  Heatmap Head: Linear(128,256)-ReLU-Linear(256,128*128)-Sigmoid
+  Zone Head:    Linear(128,128)-ReLU-Linear(128,8)-Sigmoid
+
+Loss: BCE(heatmap, target) + MSE(zone_risk, target_zone_risk)
+\end{verbatim}\\
+\hline
+\end{tabular}
+\captionof{figure}{Model architecture of the SedimentHotspotFusionNet showing the 5 modalities, their individual encoders, the attention fusion module, and dual output heads.}
+\label{fig:architecture}
+\end{minipage}
+\vspace{0.5em}
+
+\subsection{Dataset Description}
+
+Table~\ref{tab:datasets} summarizes all datasets used in the system.
+
+\begin{table}[H]
+\centering
+\small
+\caption{All datasets used in the system.}
+\label{tab:datasets}
+\begin{tabular}{llll}
+\toprule
+Dataset & Source & Format & Key Content \\
+\midrule
+Historical Weather & Open-Meteo Archive & CSV & temp, humidity, rainfall, pressure, \\
+& (2020--2025, hourly) & & wind speed, cloud cover, 14 zones \\
+Engineered Features & Derived & CSV & 31 lag/rolling/trend/time features \\
+Live Weather & Open-Meteo Forecast & JSON & Same variables, current time \\
+Satellite Imagery & Sentinel-2 / Landsat & GeoTIFF & 6-ch: B,G,R,NIR,SWIR,NDTI \\
+DEM / Terrain & SRTM / ASTER & GeoTIFF & Slope, curvature, gradient, \\
+& & & erosion susceptibility \\
+Land Cover & ESA WorldCover / MODIS & GeoTIFF & Erosion probability per class \\
+River Flow & User-supplied & CSV & River discharge, reservoir inflow, \\
+& & & water velocity \\
+Training Manifest & Generated & CSV & Paths to all preprocessed tensors \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:dimensions} shows the tensor shapes for each modality.
+
+\begin{table}[H]
+\centering
+\small
+\caption{Model input tensor shapes (batch dimension B).}
+\label{tab:dimensions}
+\begin{tabular}{lll}
+\toprule
+Input & Shape & Description \\
+\midrule
+satellite & (B, 6, 128, 128) & Blue, Green, Red, NIR, SWIR, NDTI \\
+terrain & (B, 4, 128, 128) & Slope, curvature, gradient, erosion susceptibility \\
+landuse & (B, 5, 128, 128) & Agriculture, bare, urban, hotspot, probability \\
+flow\_sequence & (B, 72, 8) & Scaled flow features over 72 timesteps \\
+rain\_features & (B, 4) & Mean/max predicted rain, mean current rain/humidity \\
+target\_heatmap & (B, 1, 128, 128) & Ground truth sediment probability \\
+zone\_risk & (B, 8) & Zone-wise risk scores \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Data Preparation:}
+Satellite GeoTIFFs are cloud-masked using QA band bitmasks, then NDWI, MNDWI, and NDTI indices are computed to extract water masks, turbidity, and plume masks. DEM data is processed to compute slope, curvature, gradient, and a composite erosion susceptibility index. Land cover is mapped to per-pixel erosion probabilities via a domain-expert lookup table. Flow data undergoes temporal feature engineering (rolling means, lags, transport risk score). Rainfall predictions from Stage 1 are aggregated into 4 summary features from the last 24 hours.
+
+\textbf{Data Quality:}
+All sources are real and authoritative. Weather data comes from operational meteorological agencies via Open-Meteo. Satellite data undergoes QA-based cloud masking. Training requires a minimum of 2 labeled samples and explicitly validates that all paths exist.
+
+\subsection{Preprocessing Steps}
+
+\textbf{Satellite:}
+\begin{verbatim}
+Input GeoTIFF --> QA band mask (bit 10=cloud, bit 11=cirrus)
+              --> NDWI = (G - NIR) / (G + NIR + 1e-6)
+              --> MNDWI = (G - SWIR) / (G + SWIR + 1e-6)
+              --> NDTI = (R - G) / (R + G + 1e-6)
+              --> Water mask = NDWI > 0.15 & MNDWI > 0 & clear
+              --> Plume at turbidity > 85th percentile
+              --> Save: water_mask.tif, turbidity.tif, plume.tif, clean_stack.npy
+\end{verbatim}
+
+\textbf{Terrain:}
+\begin{verbatim}
+Input DEM --> dzdx, dzdy (gradient)
+           --> Slope = arctan(sqrt(dzdx^2 + dzdy^2))
+           --> Curvature = Laplacian of DEM
+           --> Erosion susceptibility = 0.45*slope + 0.25*curvature + 0.30*gradient
+           --> Normalize using 2nd-98th percentile
+\end{verbatim}
+
+\textbf{Land Use:}
+\begin{verbatim}
+ESA WorldCover codes:
+  10=Tree (20%), 20=Shrub (45%), 30=Grass (55%), 40=Crop (85%),
+  50=Built (65%), 60=Bare (95%), 80=Water (5%), 90=Wetland (30%)
+Erosion hotspot = probability >= 0.65
+Save: source_probability.tif, erosion_hotspot.tif, class_stack.npy
+\end{verbatim}
+
+\textbf{Flow:}
+\begin{verbatim}
+Input CSV --> Extract month, day-of-year, monsoon phase (Jun-Sep)
+           --> 7-day rolling means and 1-day lags for each flow variable
+           --> Transport risk = 0.40*discharge + 0.35*inflow + 0.25*velocity
+           --> Deposition tendency = 1 - velocity + 0.25*inflow
+           --> StandardScaler on all numeric columns
+\end{verbatim}
+
+\bibliographystyle{ieeetr}
+\begin{thebibliography}{9}
+
+\bibitem{poonia2022}
+V.~Poonia et al., ``Rainfall forecasting using ARIMA model,'' \textit{Journal of Applied and Natural Science}, vol.~14, no.~1, pp.~114--119, 2022.
+
+\bibitem{kashiwao2017}
+T.~Kashiwao et al., ``A neural network-based local rainfall prediction system using meteorological data,'' \textit{Computers, Electronics and Agriculture}, vol.~139, pp.~119--128, 2017.
+
+\bibitem{lana2018}
+V.~Lana et al., ``Short term rainfall prediction using the mean rainfall features through data mining,'' \textit{Journal of Environmental Informatics}, vol.~31, no.~1, pp.~11--22, 2018.
+
+\bibitem{chen2019}
+C.~Chen et al., ``CNN for estimating soil erosion and sediment yield,'' \textit{Computers and Electronics in Agriculture}, vol.~165, p.~104949, 2019.
+
+\bibitem{ghebleh2021}
+M.~Ghebleh~Goydaragh et al., ``Random forest-based sediment yield prediction,'' \textit{Journal of Hydrology}, vol.~598, p.~125689, 2021.
+
+\bibitem{fang2020}
+Z.~Fang et al., ``LSTM-based modeling of suspended sediment concentration,'' \textit{Hydrological Processes}, vol.~34, no.~12, pp.~2827--2843, 2020.
+
+\bibitem{xu2015}
+K.~Xu et al., ``Show, Attend and Tell: Neural Image Caption Generation with Visual Attention,'' in \textit{Proc. ICML}, 2015.
+
+\bibitem{vaswani2017}
+A.~Vaswani et al., ``Attention is All You Need,'' in \textit{Proc. NeurIPS}, 2017.
+
+\end{thebibliography}
+
+\end{document}

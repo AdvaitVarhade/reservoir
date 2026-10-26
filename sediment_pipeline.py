@@ -68,7 +68,14 @@ def main():
             print(run_all_multi_reservoir_pipelines(model_path=args.model, mc_samples=args.mc_samples))
         else:
             print(f"[INFO] Running Multi-Reservoir Pipeline for {args.reservoir}...")
-            res = run_single_reservoir_pipeline(args.reservoir, model_path=args.model, mc_samples=args.mc_samples)
+            res = run_single_reservoir_pipeline(
+                args.reservoir,
+                model_path=args.model,
+                mc_samples=args.mc_samples,
+                satellite_tif_path=args.satellite_image,
+                flow_csv_path=args.flow_csv,
+                landcover_tif_path=args.landcover,
+            )
             print(res["zone_risk_df"])
 
 

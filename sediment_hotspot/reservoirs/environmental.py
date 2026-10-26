@@ -10,9 +10,15 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
+import rasterio
+from rasterio.enums import Resampling
 import torch
 
 from sediment_hotspot.config import MODEL
+from sediment_hotspot.data.hydro_fetcher import build_hydrological_flow_sequence
+from sediment_hotspot.data.satellite_fetcher import process_real_satellite_geotiff
+from sediment_hotspot.data.terrain_fetcher import get_real_reservoir_terrain
+from sediment_hotspot.preprocessing.landuse import ESA_WORLDCOVER_EROSION_WEIGHTS
 from sediment_hotspot.reservoirs.catalog import ReservoirSpec
 from sediment_hotspot.reservoirs.zones import ReservoirGrid
 
@@ -60,6 +66,11 @@ def get_reservoir_weather_summary(spec: ReservoirSpec) -> Dict[str, float]:
 def build_reservoir_environmental_batch(
     grid: ReservoirGrid,
     seed: int = 42,
+    use_real_terrain: bool = True,
+    dem_cache_dir: Optional[str | Path] = "data/raw/dem_cache",
+    satellite_tif_path: Optional[str | Path] = None,
+    flow_csv_path: Optional[str | Path] = None,
+    landcover_tif_path: Optional[str | Path] = None,
 ) -> Tuple[Dict[str, torch.Tensor], Dict[str, Any]]:
     """Constructs aligned multi-modal input tensors for SedimentHotspotFusionNet."""
     spec = grid.spec
@@ -71,62 +82,113 @@ def build_reservoir_environmental_batch(
     pred_rain = weather["predicted_rainfall_next_hour"]
 
     # 1. Terrain Stack (4 channels: slope, curvature, gradient, erosion susceptibility)
-    # Natural valley morphology: low elevation along flow axis, steeper on canyon flanks
-    dist_perp = grid.lateral_distance_norm
-    elevation = 0.3 * dist_perp + 0.1 * (1.0 - grid.flow_distance_norm) + 0.05 * rng.randn(h, w)
-    elevation = np.clip(elevation, 0.0, 1.0).astype("float32")
+    terrain_stack = None
+    terrain_provenance = "SURROGATE_DEM_MORPHOMETRY"
+    terrain_source = "Synthetic Valley Axis Morphometry"
 
-    gy, gx = np.gradient(elevation)
-    slope = np.clip(np.sqrt(gx**2 + gy**2) * 8.0, 0.0, 1.0).astype("float32")
-    # Curvature via 2nd derivatives
-    gyy, _ = np.gradient(gy)
-    _, gxx = np.gradient(gx)
-    curvature = np.clip(np.abs(gxx + gyy) * 15.0, 0.0, 1.0).astype("float32")
-    gradient = np.clip(np.sqrt(slope**2 + curvature**2), 0.0, 1.0).astype("float32")
-    erosion_susc = np.clip(slope * 0.5 + curvature * 0.3 + dist_perp * 0.2, 0.0, 1.0).astype("float32")
-    terrain_stack = np.stack([slope, curvature, gradient, erosion_susc], axis=0)
+    if use_real_terrain:
+        try:
+            _, terrain_stack = get_real_reservoir_terrain(
+                bbox=spec.bbox,
+                cache_dir=dem_cache_dir,
+                reservoir_id=spec.id,
+                grid_size=(h, w),
+                use_cache=True,
+            )
+            terrain_provenance = "REAL_OBSERVATION (Copernicus 30m / SRTM Global DEM)"
+            terrain_source = "Copernicus 30m / SRTM Global DEM via Open-Meteo"
+        except Exception as e:
+            terrain_stack = None
+
+    if terrain_stack is None:
+        dist_perp = grid.lateral_distance_norm
+        elevation = 0.3 * dist_perp + 0.1 * (1.0 - grid.flow_distance_norm) + 0.05 * rng.randn(h, w)
+        elevation = np.clip(elevation, 0.0, 1.0).astype("float32")
+
+        gy, gx = np.gradient(elevation)
+        slope = np.clip(np.sqrt(gx**2 + gy**2) * 8.0, 0.0, 1.0).astype("float32")
+        gyy, _ = np.gradient(gy)
+        _, gxx = np.gradient(gx)
+        curvature = np.clip(np.abs(gxx + gyy) * 15.0, 0.0, 1.0).astype("float32")
+        gradient = np.clip(np.sqrt(slope**2 + curvature**2), 0.0, 1.0).astype("float32")
+        erosion_susc = np.clip(slope * 0.5 + curvature * 0.3 + dist_perp * 0.2, 0.0, 1.0).astype("float32")
+        terrain_stack = np.stack([slope, curvature, gradient, erosion_susc], axis=0)
+    else:
+        slope = terrain_stack[0]
+        curvature = terrain_stack[1]
+        gradient = terrain_stack[2]
+        erosion_susc = terrain_stack[3]
 
     # 2. Land Use Stack (5 channels: agri, bare, urban/rock, erosion_hotspot, source_prob)
-    # Riparian/valley bottom vs cultivated slopes
-    agri = np.clip((dist_perp > 0.4).astype(float) * 0.8 + 0.1 * rng.rand(h, w), 0.0, 1.0).astype("float32")
-    bare = np.clip((slope > 0.4).astype(float) * 0.7 + 0.1 * rng.rand(h, w), 0.0, 1.0).astype("float32")
-    rock = np.clip((slope > 0.6).astype(float) * 0.9, 0.0, 1.0).astype("float32")
-    erosion_hotspot = np.clip(agri * 0.5 + bare * 0.8 + slope * 0.4, 0.0, 1.0).astype("float32")
-    source_prob = np.clip(erosion_hotspot * (1.0 - grid.water_mask.astype(float) * 0.5), 0.0, 1.0).astype("float32")
-    landuse_stack = np.stack([agri, bare, rock, erosion_hotspot, source_prob], axis=0)
+    dist_perp = grid.lateral_distance_norm
+    landuse_provenance = "MORPHOLOGY_DERIVED_LANDUSE (Slope & Riparian Buffer Model)"
+    landuse_source = "Riparian Buffer & Terrain Gradient Model"
+
+    if landcover_tif_path and Path(landcover_tif_path).exists():
+        try:
+            with rasterio.open(landcover_tif_path) as src:
+                classes = src.read(1, out_shape=(h, w), resampling=Resampling.nearest)
+            probability = np.zeros_like(classes, dtype="float32")
+            for class_id, weight in ESA_WORLDCOVER_EROSION_WEIGHTS.items():
+                probability[classes == class_id] = weight
+            agri = (classes == 40).astype("float32")
+            bare = (classes == 60).astype("float32")
+            rock = (classes == 50).astype("float32")
+            erosion_hotspot = (probability >= 0.65).astype("float32")
+            source_prob = probability
+            landuse_stack = np.stack([agri, bare, rock, erosion_hotspot, source_prob], axis=0)
+            landuse_provenance = "REAL_OBSERVATION (ESA WorldCover 10m GeoTIFF)"
+            landuse_source = f"ESA WorldCover 10m ({Path(landcover_tif_path).name})"
+        except Exception:
+            landcover_tif_path = None
+
+    if landcover_tif_path is None or not Path(landcover_tif_path).exists():
+        agri = np.clip((dist_perp > 0.4).astype(float) * 0.8 + 0.1 * rng.rand(h, w), 0.0, 1.0).astype("float32")
+        bare = np.clip((slope > 0.4).astype(float) * 0.7 + 0.1 * rng.rand(h, w), 0.0, 1.0).astype("float32")
+        rock = np.clip((slope > 0.6).astype(float) * 0.9, 0.0, 1.0).astype("float32")
+        erosion_hotspot = np.clip(agri * 0.5 + bare * 0.8 + slope * 0.4, 0.0, 1.0).astype("float32")
+        source_prob = np.clip(erosion_hotspot * (1.0 - grid.water_mask.astype(float) * 0.5), 0.0, 1.0).astype("float32")
+        landuse_stack = np.stack([agri, bare, rock, erosion_hotspot, source_prob], axis=0)
 
     # 3. Satellite Stack (6 channels: Blue, Green, Red, NIR, SWIR, NDTI Turbidity Plume)
-    # High turbidity at river inlet zones, decreasing toward lacustrine dam zone
-    base_turbidity = np.clip(
-        (1.0 - grid.flow_distance_norm * 0.75) * grid.water_mask.astype(float)
-        + 0.25 * erosion_susc * (~grid.water_mask).astype(float)
-        + 0.1 * rng.rand(h, w),
-        0.0,
-        1.0
-    ).astype("float32")
+    satellite_provenance = "SURROGATE_SATELLITE_SYNTHESIS (Simulated proxy unless GeoTIFF provided)"
+    satellite_source = "Sentinel-2 Multi-Spectral Synthetic Proxy (B2, B3, B4, B8, B11, NDTI)"
 
-    b_blue = np.clip(base_turbidity * 0.35 + 0.15, 0.0, 1.0)
-    b_green = np.clip(base_turbidity * 0.45 + 0.20, 0.0, 1.0)
-    b_red = np.clip(base_turbidity * 0.65 + 0.15, 0.0, 1.0)
-    b_nir = np.clip(0.15 * grid.water_mask.astype(float) + 0.65 * (~grid.water_mask).astype(float), 0.0, 1.0)
-    b_swir = np.clip(0.08 * grid.water_mask.astype(float) + 0.50 * (~grid.water_mask).astype(float), 0.0, 1.0)
-    satellite_stack = np.stack([b_blue, b_green, b_red, b_nir, b_swir, base_turbidity], axis=0).astype("float32")
+    if satellite_tif_path and Path(satellite_tif_path).exists():
+        try:
+            satellite_stack, sat_meta = process_real_satellite_geotiff(satellite_tif_path, target_size=(h, w))
+            base_turbidity = satellite_stack[5]
+            satellite_provenance = "REAL_OBSERVATION (Multispectral GeoTIFF)"
+            satellite_source = f"Multispectral GeoTIFF ({Path(satellite_tif_path).name})"
+        except Exception:
+            satellite_tif_path = None
+
+    if satellite_tif_path is None or not Path(satellite_tif_path).exists():
+        base_turbidity = np.clip(
+            (1.0 - grid.flow_distance_norm * 0.75) * grid.water_mask.astype(float)
+            + 0.25 * erosion_susc * (~grid.water_mask).astype(float)
+            + 0.1 * rng.rand(h, w),
+            0.0,
+            1.0,
+        ).astype("float32")
+
+        b_blue = np.clip(base_turbidity * 0.35 + 0.15, 0.0, 1.0)
+        b_green = np.clip(base_turbidity * 0.45 + 0.20, 0.0, 1.0)
+        b_red = np.clip(base_turbidity * 0.65 + 0.15, 0.0, 1.0)
+        b_nir = np.clip(0.15 * grid.water_mask.astype(float) + 0.65 * (~grid.water_mask).astype(float), 0.0, 1.0)
+        b_swir = np.clip(0.08 * grid.water_mask.astype(float) + 0.50 * (~grid.water_mask).astype(float), 0.0, 1.0)
+        satellite_stack = np.stack([b_blue, b_green, b_red, b_nir, b_swir, base_turbidity], axis=0).astype("float32")
 
     # 4. Flow Sequence (10 timesteps, 8 features)
-    # Hydrograph dynamics: discharge, inflow, velocity, stage, sediment flux, etc.
-    t_steps = 10
-    base_inflow = float(np.clip(0.3 + 0.1 * pred_rain + 0.05 * cur_rain, 0.1, 0.95))
-    flow_seq = np.zeros((t_steps, 8), dtype="float32")
-    for step in range(t_steps):
-        decay = np.exp(-(t_steps - 1 - step) / 4.0)
-        flow_seq[step, 0] = np.clip(base_inflow * (0.8 + 0.2 * decay) + 0.02 * rng.randn(), 0.0, 1.0) # discharge
-        flow_seq[step, 1] = np.clip(base_inflow * (0.85 + 0.15 * decay), 0.0, 1.0)                   # inflow
-        flow_seq[step, 2] = np.clip(0.4 * flow_seq[step, 0] + 0.1, 0.0, 1.0)                         # velocity
-        flow_seq[step, 3] = np.clip(0.5 + 0.05 * decay, 0.0, 1.0)                                    # stage
-        flow_seq[step, 4] = np.clip(flow_seq[step, 0] * 0.7, 0.0, 1.0)                               # bed shear
-        flow_seq[step, 5] = np.clip(0.35 + 0.1 * decay, 0.0, 1.0)                                    # water temp norm
-        flow_seq[step, 6] = np.clip(0.45 * flow_seq[step, 0], 0.0, 1.0)                              # suspended load
-        flow_seq[step, 7] = np.clip(0.50, 0.0, 1.0)                                                  # regulation factor
+    flow_seq, hydro_meta = build_hydrological_flow_sequence(
+        spec=spec,
+        weather_summary=weather,
+        flow_csv_path=flow_csv_path,
+        timesteps=10,
+        seed=seed,
+    )
+    flow_source = hydro_meta.get("provenance", "CWC_CATCHMENT_ROUTED_HYDROLOGY")
+    flow_provenance = hydro_meta.get("provenance", "CWC_CATCHMENT_ROUTED_HYDROLOGY")
 
     # 5. Rain Features (4 variables: current, next_hour, 3h_accum, intensity)
     rain_feat = np.array([
@@ -189,16 +251,18 @@ def build_reservoir_environmental_batch(
         "basin": spec.basin,
         "timestamp": datetime.now().isoformat(),
         "weather_data": weather,
-        "satellite_source": "Sentinel-2 Multi-Spectral (B2, B3, B4, B8, B11, NDTI Turbidity Proxy)",
-        "terrain_source": "SRTM 30m DEM Morphometry (Slope, Curvature, Plan Gradient)",
-        "flow_source": "Hydrological Routing & Gauge Inflow Model",
+        "satellite_source": satellite_source,
+        "terrain_source": terrain_source,
+        "flow_source": flow_source,
         "rainfall_source": f"Open-Meteo & XGBoost Regressor for {spec.monitoring_station_id}",
         "graph_topology": "Directed Watershed-to-Reservoir Cascade (WR-GNN)",
         "provenance_flags": {
             "dam_coordinates": "REAL_OBSERVATION (Official WRIS/CWC Coordinates)",
             "weather": weather["provenance"],
-            "ndti_turbidity": "SURROGATE_SATELLITE_SYNTHESIS (Simulated proxy unless GeoTIFF provided)",
-            "terrain": "SURROGATE_DEM_MORPHOMETRY (Valley axis morphometry unless GeoTIFF provided)",
+            "ndti_turbidity": satellite_provenance,
+            "terrain": terrain_provenance,
+            "flow": flow_provenance,
+            "landuse": landuse_provenance,
             "bathymetry_depth": "ESTIMATED_GEOMETRY_APPROXIMATION",
         },
     }
