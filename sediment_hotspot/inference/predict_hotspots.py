@@ -30,6 +30,8 @@ def predict(model_path: str, sample_npz: str, output_dir: str = "data/outputs", 
     }
     if "dsdi_features" in sample:
         batch["dsdi_features"] = _batched(sample["dsdi_features"])
+    if "dsdi_feature_map" in sample:
+        batch["dsdi_feature_map"] = _batched(sample["dsdi_feature_map"])
     if "graph_nodes" in sample:
         batch["graph_nodes"] = _batched(sample["graph_nodes"])
     if "graph_adjacency" in sample:

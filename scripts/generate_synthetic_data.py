@@ -53,12 +53,26 @@ def generate_dataset(num_samples=40, output_dir="data/processed"):
         # Rain features (4 features)
         rain_feat = np.clip(np.random.rand(4) * 0.8 + (0.3 if i % 4 == 0 else 0.0), 0, 1).astype("float32")
 
-        # DSDI 11 features
+        # DSDI 11 features (scalars)
         dsdi_feat = np.array([
             rain_feat[0], rain_feat[1], flow_seq[-1, 0], flow_seq[-1, 1], flow_seq[-1, 2],
             slope.mean(), curvature.mean(), erosion_susc.mean(), source_prob.mean(),
             turbidity_raw.mean(), np.quantile(turbidity_raw, 0.9)
         ], dtype="float32")
+
+        # 2D DSDI Feature Map [11, 128, 128]
+        m_rain = np.full((128, 128), rain_feat[0], dtype="float32")
+        m_intensity = np.full((128, 128), rain_feat[1], dtype="float32")
+        flow_decay = np.tile(np.linspace(1.0, 0.2, 128, dtype="float32")[:, None], (1, 128))
+        m_discharge = np.clip(flow_seq[-1, 0] * flow_decay, 0.0, 1.0)
+        m_inflow = np.clip(flow_seq[-1, 1] * (0.6 + 0.4 * flow_decay), 0.0, 1.0)
+        m_velocity = np.clip(flow_seq[-1, 2] * (flow_decay**1.5), 0.0, 1.0)
+        m_plume = np.clip(turbidity_raw * (turbidity_raw >= np.quantile(turbidity_raw, 0.75)).astype(float), 0.0, 1.0)
+
+        dsdi_map_stack = np.stack([
+            m_rain, m_intensity, m_discharge, m_inflow, m_velocity,
+            slope, curvature, erosion_susc, source_prob, turbidity_raw, m_plume
+        ], axis=0).astype("float32")
 
         # Graph nodes (5 nodes, 8 features) & adjacency
         graph_nodes = np.random.rand(5, 8).astype("float32")
@@ -85,6 +99,7 @@ def generate_dataset(num_samples=40, output_dir="data/processed"):
         fl_p = f"{sample_prefix}_flow.npy"
         rn_p = f"{sample_prefix}_rain.npy"
         dsdi_p = f"{sample_prefix}_dsdi.npy"
+        dsdimap_p = f"{sample_prefix}_dsdimap.npy"
         gn_p = f"{sample_prefix}_gnodes.npy"
         ga_p = f"{sample_prefix}_gadj.npy"
         tf_p = f"{sample_prefix}_target_fixed.npy"
@@ -97,6 +112,7 @@ def generate_dataset(num_samples=40, output_dir="data/processed"):
         np.save(fl_p, flow_seq)
         np.save(rn_p, rain_feat)
         np.save(dsdi_p, dsdi_feat)
+        np.save(dsdimap_p, dsdi_map_stack)
         np.save(gn_p, graph_nodes)
         np.save(ga_p, graph_adj)
         np.save(tf_p, target_fixed)
@@ -112,6 +128,7 @@ def generate_dataset(num_samples=40, output_dir="data/processed"):
             flow_sequence=flow_seq,
             rain_features=rain_feat,
             dsdi_features=dsdi_feat,
+            dsdi_feature_map=dsdi_map_stack,
             graph_nodes=graph_nodes,
             graph_adjacency=graph_adj,
             label_source="Sentinel-2 NDTI & Open-Meteo",
@@ -128,6 +145,7 @@ def generate_dataset(num_samples=40, output_dir="data/processed"):
             "flow_sequence": fl_p,
             "rain_features": rn_p,
             "dsdi_features": dsdi_p,
+            "dsdi_feature_map": dsdimap_p,
             "graph_nodes": gn_p,
             "graph_adjacency": ga_p,
             "target_heatmap_fixed": tf_p,

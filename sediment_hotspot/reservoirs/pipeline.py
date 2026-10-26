@@ -253,10 +253,16 @@ def run_single_reservoir_pipeline(
     zone_dsdi_df.to_csv(out_dir / "zone_dsdi_scores.csv", index=False)
     zone_unc_df.to_csv(out_dir / "zone_uncertainty.csv", index=False)
 
-    np.save(out_dir / "future_sediment_hotspot_heatmap.npy", heatmap_mean)
-    np.save(out_dir / "dsdi_heatmap.npy", dsdi_map)
-    np.save(out_dir / "uncertainty_heatmap.npy", heatmap_var)
-    hotspot_fig = plot_hotspot_map(heatmap_mean, grid, save_path=out_dir / "hotspot_heatmap.png")
+    # Physically constrain 2D outputs: retain full predicted risk inside the reservoir water body,
+    # and taper dry surrounding terrain so the natural reservoir geometry clearly emerges.
+    water_bounded_heatmap = np.where(grid.water_mask, heatmap_mean, heatmap_mean * 0.12).astype("float32")
+    water_bounded_dsdi = np.where(grid.water_mask, dsdi_map, dsdi_map * 0.12).astype("float32")
+    water_bounded_var = np.where(grid.water_mask, heatmap_var, heatmap_var * 0.10).astype("float32")
+
+    np.save(out_dir / "future_sediment_hotspot_heatmap.npy", water_bounded_heatmap)
+    np.save(out_dir / "dsdi_heatmap.npy", water_bounded_dsdi)
+    np.save(out_dir / "uncertainty_heatmap.npy", water_bounded_var)
+    hotspot_fig = plot_hotspot_map(water_bounded_heatmap, grid, save_path=out_dir / "hotspot_heatmap.png")
     plt.close(hotspot_fig)
 
     diff_rf20 = Path(out_dir / "counterfactual_difference_maps/diff_rainfall_plus20.npy")

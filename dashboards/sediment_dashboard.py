@@ -250,11 +250,13 @@ with tabs[4]:
             cutoff = float(np.quantile(unc, 0.75))
             high_risk = risk_base >= 0.5
             high_unc = unc >= cutoff
+            has_dry_land = (risk_base < 0.10).any()
+            is_water = (risk_base >= 0.10) if has_dry_land else np.ones(risk_base.shape, dtype=bool)
 
-            triage_rgb = np.zeros((*risk_base.shape, 3))
-            triage_rgb[~high_risk] = [0.12, 0.42, 0.78]            # Low Risk (Blue)
-            triage_rgb[high_risk & ~high_unc] = [0.88, 0.18, 0.12] # High Risk / High Conf (Red)
-            triage_rgb[high_risk & high_unc] = [1.0, 0.70, 0.08]  # High Risk / Low Conf (Amber)
+            triage_rgb = np.full((*risk_base.shape, 3), [0.88, 0.90, 0.92]) # Neutral background
+            triage_rgb[is_water & ~high_risk] = [0.12, 0.42, 0.78]            # Low Risk (Blue)
+            triage_rgb[is_water & high_risk & ~high_unc] = [0.88, 0.18, 0.12] # High Risk / High Conf (Red)
+            triage_rgb[is_water & high_risk & high_unc] = [1.0, 0.70, 0.08]  # High Risk / Low Conf (Amber)
 
             fig_tri, ax_tri = plt.subplots(figsize=(4.8, 4.2), dpi=120)
             ax_tri.imshow(triage_rgb, origin="upper", aspect="equal")
@@ -359,7 +361,7 @@ with tabs[6]:
             plt.close(fig_cf)
 
         with c3:
-            diff_abs_max = max(0.02, float(max(abs(diff_map.min()), abs(diff_map.max()))))
+            diff_abs_max = max(0.001, float(max(abs(diff_map.min()), abs(diff_map.max()))))
             fig_d = plot_heatmap(
                 diff_map,
                 "3. Risk Change ΔH = H_cf − H",
@@ -549,7 +551,9 @@ with tabs[7]:
 
         with c_map2:
             st.markdown("#### Predicted Sediment Hotspots Heatmap f(X)")
-            if hotspot_npy.exists():
+            if hotspot_png.exists():
+                st.image(str(hotspot_png), use_container_width=True)
+            elif hotspot_npy.exists():
                 h_data = np.load(hotspot_npy)
                 fig_h = plot_heatmap(
                     h_data,
@@ -563,8 +567,6 @@ with tabs[7]:
                 )
                 st.pyplot(fig_h)
                 plt.close(fig_h)
-            elif hotspot_png.exists():
-                st.image(str(hotspot_png), use_container_width=True)
 
         zone_meta_csv = res_dir / "reservoir_zone_map.csv"
         if zone_meta_csv.exists():
@@ -702,12 +704,12 @@ with tabs[7]:
                 st.pyplot(f2)
                 plt.close(f2)
             with p3:
-                lim_d = max(0.02, float(max(abs(d_m.min()), abs(d_m.max()))))
+                lim_d = max(0.001, float(max(abs(d_m.min()), abs(d_m.max()))))
                 f3 = plot_heatmap(d_m, "3. Risk Shift ΔH = H_cf − H", cmap="RdBu_r", vmin=-lim_d, vmax=lim_d, cbar_label="Δ Risk (+Red / -Blue)")
                 st.pyplot(f3)
                 plt.close(f3)
             with p4:
-                lim_s = max(0.05, float(s_m.max()))
+                lim_s = max(0.005, float(s_m.max()))
                 f4 = plot_heatmap(s_m, "4. Spatial Sensitivity |ΔH| / |Δx|", cmap="magma", vmin=0.0, vmax=lim_s, cbar_label="Sensitivity")
                 st.pyplot(f4)
                 plt.close(f4)

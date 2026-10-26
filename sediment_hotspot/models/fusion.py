@@ -11,7 +11,8 @@ from sediment_hotspot.models.lstm import FlowLSTM
 
 
 class SpatialDecoder(nn.Module):
-    """Deep spatial decoder with progressive bilinear upsampling and convolutions.
+    """Deep spatial decoder with progressive bilinear upsampling, convolutions,
+    and multi-modal spatial feature fusion.
     Preserves 2D spatial coherence and continuity for sediment hotspot risk prediction.
     """
 
@@ -40,22 +41,60 @@ class SpatialDecoder(nn.Module):
         self.up3 = block(48, 32)   # 32x32
         self.up4 = block(32, 24)   # 64x64
         self.up5 = block(24, 16)   # 128x128
+
+        # Spatial skip-fusion from 32x32 CNN features with FiLM modulation
+        self.spatial_fuse = nn.Sequential(
+            nn.Conv2d(128, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+        self.gamma_proj = nn.Linear(in_features, 32)
+        self.beta_proj = nn.Linear(in_features, 32)
+        nn.init.zeros_(self.gamma_proj.weight)
+        nn.init.zeros_(self.gamma_proj.bias)
+        nn.init.zeros_(self.beta_proj.weight)
+        nn.init.zeros_(self.beta_proj.bias)
+
         self.out_conv = nn.Sequential(
             nn.Conv2d(16, out_channels, kernel_size=3, padding=1),
             nn.Sigmoid(),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        spatial_context: torch.Tensor | None = None,
+        dsdi_prior_map: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         b = x.shape[0]
-        h = self.proj(x).view(b, 128, 4, 4)
-        h = self.up1(h)
-        h = self.up2(h)
-        h = self.up3(h)
-        h = self.up4(h)
-        h = self.up5(h)
-        out = self.out_conv(h)
-        if out.shape[-2:] != self.image_size:
-            out = nn.functional.interpolate(out, size=self.image_size, mode="bilinear", align_corners=False)
+        if spatial_context is not None:
+            # Multi-modal spatial fusion: start from preserved 32x32 spatial map
+            ctx32 = self.spatial_fuse(spatial_context)
+            gamma = self.gamma_proj(x).view(b, 32, 1, 1)
+            beta = self.beta_proj(x).view(b, 32, 1, 1)
+            h = ctx32 * (1.0 + gamma) + beta
+            h = self.up4(h)
+            h = self.up5(h)
+        else:
+            # Fallback path if spatial context is not supplied
+            h = self.proj(x).view(b, 128, 4, 4)
+            h = self.up1(h)
+            h = self.up2(h)
+            h = self.up3(h)
+            h = self.up4(h)
+            h = self.up5(h)
+
+        raw_map = self.out_conv(h)
+        if raw_map.shape[-2:] != self.image_size:
+            raw_map = nn.functional.interpolate(raw_map, size=self.image_size, mode="bilinear", align_corners=False)
+
+        if dsdi_prior_map is not None:
+            # Blend deep learned spatial residual with environmental DSDI prior
+            if dsdi_prior_map.shape[-2:] != self.image_size:
+                dsdi_prior_map = nn.functional.interpolate(dsdi_prior_map, size=self.image_size, mode="bilinear", align_corners=False)
+            out = torch.clamp(0.6 * raw_map + 0.4 * dsdi_prior_map, 0.0, 1.0)
+        else:
+            out = raw_map
         return out
 
 
@@ -132,7 +171,23 @@ class SedimentHotspotFusionNet(nn.Module):
         contrastive_res = self.contrastive(representations)
 
         fused_drop = self.dropout(fused)
-        heatmap = self.heatmap_head(fused_drop).view(-1, 1, *self.image_size)
+
+        # Multi-modal spatial context from CNN feature extractors
+        sat_feat = self.satellite_cnn.extract_features(batch["satellite"])
+        terr_feat = self.terrain_cnn.extract_features(batch["terrain"])
+        land_feat = self.landuse_cnn.extract_features(batch["landuse"])
+
+        # Modulate spatial feature maps by learned causal attention weights
+        w_sat = weights["final"][:, 0:1, None, None]
+        w_terr = weights["final"][:, 2:3, None, None]
+        w_land = weights["final"][:, 3:4, None, None]
+        spatial_context = w_sat * sat_feat + w_terr * terr_feat + w_land * land_feat
+
+        heatmap = self.heatmap_head(
+            fused_drop,
+            spatial_context=spatial_context,
+            dsdi_prior_map=dsdi_out.get("map", None),
+        ).view(-1, 1, *self.image_size)
         zone_risk = self.zone_head(fused_drop)
         dsdi_pred = self.dsdi_head(fused_drop)
 

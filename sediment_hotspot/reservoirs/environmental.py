@@ -198,7 +198,7 @@ def build_reservoir_environmental_batch(
         np.clip((pred_rain - cur_rain) / 10.0 + 0.2, 0.0, 1.0),
     ], dtype="float32")
 
-    # 6. DSDI Features (11 variables)
+    # 6. DSDI Features (11 scalar variables)
     dsdi_feat = np.array([
         rain_feat[0],                                       # rainfall
         rain_feat[3],                                       # rainfall_intensity
@@ -212,6 +212,29 @@ def build_reservoir_environmental_batch(
         float(base_turbidity[grid.water_mask].mean()),      # turbidity_ndti
         float(np.quantile(base_turbidity[grid.water_mask], 0.90)), # plume_intensity
     ], dtype="float32")
+
+    # 6b. 2D Spatial DSDI Feature Map [11, H, W]
+    s_dist = grid.flow_distance_norm
+    flow_decay = np.exp(-2.2 * s_dist).astype("float32")
+    vel_decay = np.exp(-3.0 * s_dist).astype("float32")
+
+    m_rain = np.full((h, w), rain_feat[0], dtype="float32")
+    m_intensity = np.full((h, w), rain_feat[3], dtype="float32")
+    m_discharge = np.clip(flow_seq[-1, 0] * flow_decay, 0.0, 1.0)
+    m_inflow = np.clip(flow_seq[-1, 1] * (0.5 + 0.5 * flow_decay), 0.0, 1.0)
+    m_velocity = np.clip(flow_seq[-1, 2] * vel_decay, 0.0, 1.0)
+    m_slope = terrain_stack[0]
+    m_curvature = terrain_stack[1]
+    m_erosion = terrain_stack[3]
+    m_source = landuse_stack[3]
+    m_turbidity = satellite_stack[5]
+    plume_thresh = float(np.quantile(m_turbidity[grid.water_mask], 0.70)) if grid.water_mask.sum() > 0 else 0.5
+    m_plume = np.clip(m_turbidity * (m_turbidity >= plume_thresh).astype(float), 0.0, 1.0)
+
+    dsdi_map_stack = np.stack([
+        m_rain, m_intensity, m_discharge, m_inflow, m_velocity,
+        m_slope, m_curvature, m_erosion, m_source, m_turbidity, m_plume
+    ], axis=0).astype("float32")
 
     # 7. WR-GNN Graph Nodes (5 nodes to match pre-trained model input shape [B, 5, 8])
     # Encodes upstream basin station + reservoir zones
@@ -241,6 +264,7 @@ def build_reservoir_environmental_batch(
         "flow_sequence": torch.from_numpy(flow_seq).unsqueeze(0),
         "rain_features": torch.from_numpy(rain_feat).unsqueeze(0),
         "dsdi_features": torch.from_numpy(dsdi_feat).unsqueeze(0),
+        "dsdi_feature_map": torch.from_numpy(dsdi_map_stack).unsqueeze(0),
         "graph_nodes": torch.from_numpy(graph_nodes).unsqueeze(0),
         "graph_adjacency": torch.from_numpy(graph_adj).unsqueeze(0),
     }

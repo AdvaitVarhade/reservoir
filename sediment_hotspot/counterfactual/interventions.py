@@ -39,6 +39,11 @@ def apply_intervention(
             # Hydrological propagation: increased rainfall increases runoff arrival
             if magnitude > 0:
                 cf_batch["dsdi_features"][:, 3] = torch.clamp(cf_batch["dsdi_features"][:, 3] * (1.0 + 0.5 * magnitude), 0.0, 1.0)
+        if "dsdi_feature_map" in cf_batch:
+            cf_batch["dsdi_feature_map"][:, 0] = torch.clamp(cf_batch["dsdi_feature_map"][:, 0] * factor, 0.0, 1.0)
+            cf_batch["dsdi_feature_map"][:, 1] = torch.clamp(cf_batch["dsdi_feature_map"][:, 1] * factor, 0.0, 1.0)
+            if magnitude > 0:
+                cf_batch["dsdi_feature_map"][:, 3] = torch.clamp(cf_batch["dsdi_feature_map"][:, 3] * (1.0 + 0.5 * magnitude), 0.0, 1.0)
 
     elif intervention_type == "flow":
         # Modify flow sequence (dim: [B, T, 8])
@@ -46,22 +51,31 @@ def apply_intervention(
         if "dsdi_features" in cf_batch:
             cf_batch["dsdi_features"][:, 2] = torch.clamp(cf_batch["dsdi_features"][:, 2] * factor, 0.0, 1.0)
             cf_batch["dsdi_features"][:, 4] = torch.clamp(cf_batch["dsdi_features"][:, 4] * factor, 0.0, 1.0)
+        if "dsdi_feature_map" in cf_batch:
+            cf_batch["dsdi_feature_map"][:, 2] = torch.clamp(cf_batch["dsdi_feature_map"][:, 2] * factor, 0.0, 1.0)
+            cf_batch["dsdi_feature_map"][:, 4] = torch.clamp(cf_batch["dsdi_feature_map"][:, 4] * factor, 0.0, 1.0)
 
     elif intervention_type == "inflow":
         # Modify inflow in flow sequence (channel 1) and DSDI (index 3)
         cf_batch["flow_sequence"][:, :, 1] = torch.clamp(cf_batch["flow_sequence"][:, :, 1] * factor, 0.0, 1.0)
         if "dsdi_features" in cf_batch:
             cf_batch["dsdi_features"][:, 3] = torch.clamp(cf_batch["dsdi_features"][:, 3] * factor, 0.0, 1.0)
+        if "dsdi_feature_map" in cf_batch:
+            cf_batch["dsdi_feature_map"][:, 3] = torch.clamp(cf_batch["dsdi_feature_map"][:, 3] * factor, 0.0, 1.0)
 
     elif intervention_type == "rainfall_intensity":
         cf_batch["rain_features"][:, 1] = torch.clamp(cf_batch["rain_features"][:, 1] * factor, 0.0, 1.0)
         if "dsdi_features" in cf_batch:
             cf_batch["dsdi_features"][:, 1] = torch.clamp(cf_batch["dsdi_features"][:, 1] * factor, 0.0, 1.0)
+        if "dsdi_feature_map" in cf_batch:
+            cf_batch["dsdi_feature_map"][:, 1] = torch.clamp(cf_batch["dsdi_feature_map"][:, 1] * factor, 0.0, 1.0)
 
     elif intervention_type == "water_velocity":
         cf_batch["flow_sequence"][:, :, 2] = torch.clamp(cf_batch["flow_sequence"][:, :, 2] * factor, 0.0, 1.0)
         if "dsdi_features" in cf_batch:
             cf_batch["dsdi_features"][:, 4] = torch.clamp(cf_batch["dsdi_features"][:, 4] * factor, 0.0, 1.0)
+        if "dsdi_feature_map" in cf_batch:
+            cf_batch["dsdi_feature_map"][:, 4] = torch.clamp(cf_batch["dsdi_feature_map"][:, 4] * factor, 0.0, 1.0)
 
     metadata = {
         "intervention_type": intervention_type,

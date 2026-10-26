@@ -53,6 +53,8 @@ def run_all_scenarios(
             "dsdi_features": torch.from_numpy(raw["dsdi_features"].astype("float32")).unsqueeze(0),
             "graph_nodes": torch.from_numpy(raw["graph_nodes"].astype("float32")).unsqueeze(0),
         }
+        if "dsdi_feature_map" in raw:
+            batch["dsdi_feature_map"] = torch.from_numpy(raw["dsdi_feature_map"].astype("float32")).unsqueeze(0)
     else:
         batch = sample_or_path
 
