@@ -41,9 +41,9 @@ class ModelConfig:
     image_size: tuple[int, int] = (128, 128)
     modality_names: tuple[str, ...] = (
         "satellite",
+        "flow",
         "terrain",
         "landuse",
-        "flow",
         "rain",
         "graph",
         "dsdi",

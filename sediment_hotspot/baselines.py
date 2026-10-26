@@ -170,9 +170,12 @@ def run_all_baselines(manifest_csv: str, output_csv: str = "results/baseline_res
 
     # 2. XGBoost
     print("Training 2/8: XGBoost...")
+    from sklearn.multioutput import MultiOutputRegressor
     xgb_heat = xgb.XGBRegressor(n_estimators=50, random_state=42).fit(X_train, y_h_train)
+    xgb_zone = MultiOutputRegressor(xgb.XGBRegressor(n_estimators=50, random_state=42)).fit(X_train, y_z_train)
     xgb_p_h = xgb_heat.predict(X_test)
-    xgb_metrics = evaluate_outputs(y_h_test, xgb_p_h, zone_true=y_z_test, zone_pred=rf_p_z)
+    xgb_p_z = xgb_zone.predict(X_test)
+    xgb_metrics = evaluate_outputs(y_h_test, xgb_p_h, zone_true=y_z_test, zone_pred=xgb_p_z)
     xgb_metrics["model"] = "XGBoost"
     results.append(xgb_metrics)
 

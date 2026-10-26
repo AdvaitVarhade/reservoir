@@ -158,8 +158,13 @@ def test_connectivity_graph_generation():
     assert len(analysis["propagation_records"]) == len(spec.zones)
 
 
-def test_single_reservoir_pipeline_execution(tmp_path):
+def test_single_reservoir_pipeline_execution(tmp_path=None):
     """Verify execution of full single-reservoir prediction pipeline and artifact generation."""
+    if tmp_path is None:
+        import tempfile
+        tmp_path = Path(tempfile.mkdtemp())
+    from scripts.bootstrap_model import ensure_starter_artifacts
+    ensure_starter_artifacts()
     out_dir = tmp_path / "test_outputs"
     res = run_single_reservoir_pipeline(
         reservoir_id="krishna_nagarjuna_sagar",
@@ -185,8 +190,13 @@ def test_single_reservoir_pipeline_execution(tmp_path):
     assert (res_path / "prediction_metadata.json").exists()
 
 
-def test_counterfactual_sensitivity_calculation(tmp_path):
+def test_counterfactual_sensitivity_calculation(tmp_path=None):
     """Verify counterfactual calculation Delta H and spatial sensitivity."""
+    if tmp_path is None:
+        import tempfile
+        tmp_path = Path(tempfile.mkdtemp())
+    from scripts.bootstrap_model import ensure_starter_artifacts
+    ensure_starter_artifacts()
     from sediment_hotspot.models.fusion import SedimentHotspotFusionNet
     ckpt = torch.load("data/models/sediment_fusion_model.pt", map_location="cpu")
     model = SedimentHotspotFusionNet()

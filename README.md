@@ -411,6 +411,14 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+### Step 3: Bootstrap Starter Weights & Verification Artifacts
+
+Initialize starter model weights and minimal sample datasets so tests, CLI workflows, and dashboards run out-of-the-box:
+
+```bash
+python scripts/bootstrap_model.py
+```
+
 Key packages installed:
 - `torch`, `torchvision`, `torchaudio` (PyTorch deep learning framework)
 - `xgboost` (Extreme Gradient Boosting regressor)

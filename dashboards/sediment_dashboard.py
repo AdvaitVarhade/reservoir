@@ -1,4 +1,5 @@
 import sys
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -504,7 +505,6 @@ with tabs[7]:
     meta_path = res_dir / "prediction_metadata.json"
     meta_dict = {}
     if meta_path.exists():
-        import json
         with open(meta_path, "r", encoding="utf-8") as f:
             meta_dict = json.load(f)
 

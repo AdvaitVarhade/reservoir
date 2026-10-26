@@ -197,8 +197,8 @@ def build_reservoir_environmental_batch(
         "provenance_flags": {
             "dam_coordinates": "REAL_OBSERVATION (Official WRIS/CWC Coordinates)",
             "weather": weather["provenance"],
-            "ndti_turbidity": "DERIVED_FROM_SATELLITE_INDEX",
-            "terrain": "DEM_DERIVED_MORPHOMETRY",
+            "ndti_turbidity": "SURROGATE_SATELLITE_SYNTHESIS (Simulated proxy unless GeoTIFF provided)",
+            "terrain": "SURROGATE_DEM_MORPHOMETRY (Valley axis morphometry unless GeoTIFF provided)",
             "bathymetry_depth": "ESTIMATED_GEOMETRY_APPROXIMATION",
         },
     }

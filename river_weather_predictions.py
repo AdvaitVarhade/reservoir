@@ -56,16 +56,14 @@ RIVER_ZONES = {
 
 
 def get_weather(lat, lon):
-    """Fetch current weather from Open-Meteo Forecast API"""
+    """Fetch current and recent hourly weather from Open-Meteo Forecast API"""
     url = (
         f"https://api.open-meteo.com/v1/forecast?"
         f"latitude={lat}&longitude={lon}"
-        f"&current=temperature_2m,"
-        f"relative_humidity_2m,"
-        f"precipitation,"
-        f"surface_pressure,"
-        f"wind_speed_10m,"
-        f"cloud_cover"
+        f"&current=temperature_2m,relative_humidity_2m,precipitation,surface_pressure,wind_speed_10m,cloud_cover"
+        f"&hourly=temperature_2m,relative_humidity_2m,precipitation,surface_pressure,wind_speed_10m,cloud_cover"
+        f"&past_days=1&forecast_days=1"
+        f"&timezone=Asia/Kolkata"
     )
 
     try:
@@ -73,6 +71,7 @@ def get_weather(lat, lon):
         data = response.json()
 
         current = data.get("current", {})
+        hourly = data.get("hourly", {})
 
         return {
             "temperature": current.get("temperature_2m"),
@@ -81,6 +80,7 @@ def get_weather(lat, lon):
             "pressure": current.get("surface_pressure"),
             "wind_speed": current.get("wind_speed_10m"),
             "cloud_cover": current.get("cloud_cover"),
+            "hourly": hourly,
         }
 
     except Exception as e:
@@ -90,58 +90,103 @@ def get_weather(lat, lon):
 
 def create_prediction_features(weather_data):
     """
-    Create features for model prediction
-    
-    NOTE: This is simplified. In production, you'd load recent historical
-          lag data from a database for more accurate lag features.
-          
-    For now, using zeros for lag features (model handles this)
+    Create features for model prediction using actual recent hourly lags
+    or robust baseline values to prevent distribution shift.
     """
+    cur_t = weather_data.get("temperature") or 25.0
+    cur_h = weather_data.get("humidity") or 60.0
+    cur_r = weather_data.get("rainfall") or 0.0
+    cur_p = weather_data.get("pressure") or 1013.0
+    cur_w = weather_data.get("wind_speed") or 10.0
+    cur_c = weather_data.get("cloud_cover") or 20.0
+
+    hourly = weather_data.get("hourly", {})
+    t_hist = [v for v in hourly.get("temperature_2m", []) if v is not None]
+    h_hist = [v for v in hourly.get("relative_humidity_2m", []) if v is not None]
+    r_hist = [v for v in hourly.get("precipitation", []) if v is not None]
+    p_hist = [v for v in hourly.get("surface_pressure", []) if v is not None]
+    w_hist = [v for v in hourly.get("wind_speed_10m", []) if v is not None]
+    c_hist = [v for v in hourly.get("cloud_cover", []) if v is not None]
+
+    def get_lag(hist, lag_idx, default):
+        if len(hist) >= lag_idx + 1:
+            return float(hist[-(lag_idx + 1)])
+        return float(default)
+
+    t_lag1 = get_lag(t_hist, 1, cur_t)
+    t_lag2 = get_lag(t_hist, 2, cur_t)
+    t_lag3 = get_lag(t_hist, 3, cur_t)
+
+    h_lag1 = get_lag(h_hist, 1, cur_h)
+    h_lag2 = get_lag(h_hist, 2, cur_h)
+    h_lag3 = get_lag(h_hist, 3, cur_h)
+
+    r_lag1 = get_lag(r_hist, 1, cur_r)
+    r_lag2 = get_lag(r_hist, 2, cur_r)
+    r_lag3 = get_lag(r_hist, 3, cur_r)
+
+    p_lag1 = get_lag(p_hist, 1, cur_p)
+    p_lag2 = get_lag(p_hist, 2, cur_p)
+    p_lag3 = get_lag(p_hist, 3, cur_p)
+
+    w_lag1 = get_lag(w_hist, 1, cur_w)
+    w_lag2 = get_lag(w_hist, 2, cur_w)
+    w_lag3 = get_lag(w_hist, 3, cur_w)
+
+    c_lag1 = get_lag(c_hist, 1, cur_c)
+    c_lag2 = get_lag(c_hist, 2, cur_c)
+    c_lag3 = get_lag(c_hist, 3, cur_c)
+
+    r_avg3 = float((cur_r + r_lag1 + r_lag2) / 3.0)
+    h_avg3 = float((cur_h + h_lag1 + h_lag2) / 3.0)
+    t_avg3 = float((cur_t + t_lag1 + t_lag2) / 3.0)
+
+    p_change = float(cur_p - p_lag1)
+    h_change = float(cur_h - h_lag1)
+    t_change = float(cur_t - t_lag1)
+    w_change = float(cur_w - w_lag1)
+
     features = {
-        "temperature": weather_data.get("temperature", 0),
-        "humidity": weather_data.get("humidity", 0),
-        "rainfall": weather_data.get("rainfall", 0),
-        "pressure": weather_data.get("pressure", 0),
-        "wind_speed": weather_data.get("wind_speed", 0),
-        "cloud_cover": weather_data.get("cloud_cover", 0),
-        
-        # Lag features (would come from recent history in production)
-        "temperature_lag_1": 0,
-        "temperature_lag_2": 0,
-        "temperature_lag_3": 0,
-        "humidity_lag_1": 0,
-        "humidity_lag_2": 0,
-        "humidity_lag_3": 0,
-        "rainfall_lag_1": 0,
-        "rainfall_lag_2": 0,
-        "rainfall_lag_3": 0,
-        "pressure_lag_1": 0,
-        "pressure_lag_2": 0,
-        "pressure_lag_3": 0,
-        "wind_speed_lag_1": 0,
-        "wind_speed_lag_2": 0,
-        "wind_speed_lag_3": 0,
-        "cloud_cover_lag_1": 0,
-        "cloud_cover_lag_2": 0,
-        "cloud_cover_lag_3": 0,
-        
-        # Rolling averages
-        "rainfall_avg_3": weather_data.get("rainfall", 0),
-        "humidity_avg_3": weather_data.get("humidity", 0),
-        "temperature_avg_3": weather_data.get("temperature", 0),
-        
-        # Change features
-        "pressure_change": 0,
-        "humidity_change": 0,
-        "temperature_change": 0,
-        "wind_change": 0,
-        
-        # Time features
+        "temperature": cur_t,
+        "humidity": cur_h,
+        "rainfall": cur_r,
+        "pressure": cur_p,
+        "wind_speed": cur_w,
+        "cloud_cover": cur_c,
+
+        "temperature_lag_1": t_lag1,
+        "temperature_lag_2": t_lag2,
+        "temperature_lag_3": t_lag3,
+        "humidity_lag_1": h_lag1,
+        "humidity_lag_2": h_lag2,
+        "humidity_lag_3": h_lag3,
+        "rainfall_lag_1": r_lag1,
+        "rainfall_lag_2": r_lag2,
+        "rainfall_lag_3": r_lag3,
+        "pressure_lag_1": p_lag1,
+        "pressure_lag_2": p_lag2,
+        "pressure_lag_3": p_lag3,
+        "wind_speed_lag_1": w_lag1,
+        "wind_speed_lag_2": w_lag2,
+        "wind_speed_lag_3": w_lag3,
+        "cloud_cover_lag_1": c_lag1,
+        "cloud_cover_lag_2": c_lag2,
+        "cloud_cover_lag_3": c_lag3,
+
+        "rainfall_avg_3": r_avg3,
+        "humidity_avg_3": h_avg3,
+        "temperature_avg_3": t_avg3,
+
+        "pressure_change": p_change,
+        "humidity_change": h_change,
+        "temperature_change": t_change,
+        "wind_change": w_change,
+
         "hour": datetime.now().hour,
         "day": datetime.now().day,
         "month": datetime.now().month,
     }
-    
+
     return features
 
 

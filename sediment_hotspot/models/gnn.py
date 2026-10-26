@@ -46,7 +46,7 @@ class WatershedReservoirGNN(nn.Module):
         if adjacency is None:
             adjacency = self._fallback_adjacency(nodes)
         adjacency = adjacency.float()
-        adjacency = adjacency + torch.eye(adjacency.size(-1), device=adjacency.device).unsqueeze(0)
+        adjacency = torch.clamp(adjacency + torch.eye(adjacency.size(-1), device=adjacency.device).unsqueeze(0), min=0.0, max=1.0)
         states = torch.relu(self.input_projection(nodes))
         attentions = []
         for layer in self.layers:
