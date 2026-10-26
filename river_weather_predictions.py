@@ -285,7 +285,7 @@ def save_predictions(predictions):
     else:
         df.to_csv(PREDICTIONS_FILE, index=False)
 
-    print(f"\n✓ Saved {len(predictions)} predictions to {PREDICTIONS_FILE}")
+    print(f"\n[OK] Saved {len(predictions)} predictions to {PREDICTIONS_FILE}")
 
 
 def main():
@@ -293,9 +293,10 @@ def main():
     
     # Check if model exists
     if not os.path.exists(MODEL_FILE):
-        print(f"✗ Error: {MODEL_FILE} not found")
-        print("  Train the model first with: python pipeline.py --train")
-        return
+        print(f"[ERROR] {MODEL_FILE} not found")
+        print("  Bootstrapping starter rainfall model...")
+        from scripts.bootstrap_model import ensure_rainfall_starter_artifacts
+        ensure_rainfall_starter_artifacts()
 
     print("\n" + "="*70)
     print("REAL-TIME RAINFALL PREDICTIONS")
@@ -308,9 +309,9 @@ def main():
     # Load model
     try:
         model = joblib.load(MODEL_FILE)
-        print("✓ Model loaded\n")
+        print("[OK] Model loaded\n")
     except Exception as e:
-        print(f"✗ Error loading model: {e}")
+        print(f"[ERROR] Error loading model: {e}")
         return
 
     # Collect predictions
@@ -319,7 +320,7 @@ def main():
     if predictions:
         save_predictions(predictions)
     else:
-        print("\n✗ No predictions generated")
+        print("\n[ERROR] No predictions generated")
 
 
 if __name__ == "__main__":
